@@ -134,6 +134,10 @@ def resolve_create_url_conflict(short_code):
 def list_urls():
     urls = Link.select().order_by(Link.id)
 
+    short_code = request.args.get("short_code")
+    if short_code is not None:
+        urls = urls.where(Link.slug == short_code.strip())
+
     raw_user_id = request.args.get("user_id")
     if raw_user_id is not None:
         try:

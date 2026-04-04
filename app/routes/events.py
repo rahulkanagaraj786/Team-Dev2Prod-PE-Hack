@@ -43,7 +43,9 @@ def validate_event_type(event_type):
 
 
 def validate_user_id(user_id):
-    if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
+    if user_id is not None and (
+        isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0
+    ):
         return "User ID must be a positive number."
     return None
 
@@ -161,7 +163,7 @@ def create_event():
         return error_response("validation_failed", "Choose an active URL.", 422)
 
     user_id = payload.get("user_id")
-    if not User.select().where(User.id == user_id).exists():
+    if user_id is not None and not User.select().where(User.id == user_id).exists():
         return error_response("validation_failed", "Choose an existing user.", 422)
 
     details = payload.get("details")
