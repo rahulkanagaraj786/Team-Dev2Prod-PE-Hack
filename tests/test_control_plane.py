@@ -68,3 +68,59 @@ def test_cluster_status_surfaces_unreachable_workload(monkeypatch):
         "message": "Health check is unavailable.",
     }
     assert payload["chaosMesh"] == {"status": "unavailable"}
+
+
+def test_resources_return_local_scope_when_not_in_cluster(monkeypatch):
+    monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+    monkeypatch.setenv("WORKLOAD_DEPLOYMENT_NAME", "dev2prod-api")
+    monkeypatch.setenv("CONTROL_PLANE_DEPLOYMENT_NAME", "dev2prod-control")
+    monkeypatch.setenv("WORKLOAD_SERVICE_NAME", "dev2prod-service")
+
+    app = create_app()
+
+    with app.test_client() as client:
+        response = client.get("/api/resources")
+
+    payload = response.get_json()["data"]
+    assert response.status_code == 200
+    assert payload["mode"] == "local"
+    assert payload["namespace"] == "dev2prod"
+    assert payload["resources"]["deployments"][0]["name"] == "dev2prod-api"
+    assert payload["resources"]["deployments"][1]["name"] == "dev2prod-control"
+    assert payload["resources"]["services"][0]["name"] == "dev2prod-service"
+    assert payload["resources"]["pods"] == []
+    assert payload["events"] == []
+
+
+def test_resources_return_cluster_payload(monkeypatch):
+    monkeypatch.setenv("CLUSTER_NAMESPACE", "demo")
+
+    app = create_app()
+
+    def fake_resources(config):
+        assert config["CLUSTER_NAMESPACE"] == "demo"
+        return {
+            "mode": "cluster",
+            "namespace": "demo",
+            "resources": {
+                "deployments": [{"name": "dev2prod-api", "kind": "deployment"}],
+                "replicaSets": [],
+                "pods": [{"name": "dev2prod-api-123", "kind": "pod"}],
+                "services": [{"name": "dev2prod-service", "kind": "service"}],
+                "experiments": [{"name": "latency-test", "kind": "experiment"}],
+            },
+            "events": [{"name": "api-ready", "reason": "Ready"}],
+        }
+
+    monkeypatch.setattr(control_plane, "list_namespace_resources", fake_resources)
+
+    with app.test_client() as client:
+        response = client.get("/api/resources")
+
+    payload = response.get_json()["data"]
+    assert response.status_code == 200
+    assert payload["mode"] == "cluster"
+    assert payload["resources"]["deployments"][0]["name"] == "dev2prod-api"
+    assert payload["resources"]["pods"][0]["name"] == "dev2prod-api-123"
+    assert payload["resources"]["experiments"][0]["name"] == "latency-test"
+    assert payload["events"][0]["reason"] == "Ready"

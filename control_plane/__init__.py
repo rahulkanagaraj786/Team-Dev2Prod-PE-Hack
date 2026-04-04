@@ -6,6 +6,8 @@ from urllib.request import urlopen
 from dotenv import load_dotenv
 from flask import Flask, jsonify
 
+from control_plane.cluster import list_namespace_resources
+
 
 def read_flag(name: str, default: bool = False) -> bool:
     value = os.environ.get(name)
@@ -49,6 +51,12 @@ def create_app() -> Flask:
         CLUSTER_NAMESPACE=os.environ.get("CLUSTER_NAMESPACE", "dev2prod"),
         CLUSTER_PROVIDER=os.environ.get("CLUSTER_PROVIDER", "digitalocean"),
         WORKLOAD_API_URL=os.environ.get("WORKLOAD_API_URL", "http://127.0.0.1:5000"),
+        WORKLOAD_DEPLOYMENT_NAME=os.environ.get("WORKLOAD_DEPLOYMENT_NAME", "workload-api"),
+        WORKLOAD_SERVICE_NAME=os.environ.get("WORKLOAD_SERVICE_NAME", "workload-api"),
+        CONTROL_PLANE_DEPLOYMENT_NAME=os.environ.get(
+            "CONTROL_PLANE_DEPLOYMENT_NAME",
+            "control-plane",
+        ),
         CHAOS_MESH_ENABLED=read_flag("CHAOS_MESH_ENABLED"),
     )
 
@@ -74,5 +82,9 @@ def create_app() -> Flask:
                 "chaosMesh": {"status": chaos_mesh_status},
             }
         )
+
+    @app.get("/api/resources")
+    def resources():
+        return jsonify(data=list_namespace_resources(app.config))
 
     return app
