@@ -34,6 +34,7 @@ def test_normalize_experiment_uses_product_type_and_running_status():
         "type": "pod-kill",
         "name": "pod-kill-3eacfc",
         "status": "running",
+        "targetKind": None,
         "target": "workload-api-abc123",
         "updatedAt": "2026-04-04T14:59:32Z",
     }
@@ -84,10 +85,53 @@ def test_normalize_experiment_captures_network_latency_details():
         "type": "network-latency",
         "name": "latency-run",
         "status": "pending",
+        "targetKind": None,
         "target": "workload-api",
         "updatedAt": "2026-04-04T15:10:00Z",
         "durationSeconds": 60,
         "latencyMs": 120,
+    }
+
+
+def test_normalize_experiment_captures_cpu_stress_details():
+    payload = {
+        "metadata": {
+            "name": "cpu-stress-025e18",
+            "creationTimestamp": "2026-04-04T15:59:17Z",
+            "labels": {
+                "dev2prod.io/experiment-type": "cpu-stress",
+                "dev2prod.io/target-kind": "deployment",
+                "dev2prod.io/target-name": "workload-api",
+            },
+        },
+        "spec": {
+            "duration": "60s",
+            "stressors": {
+                "cpu": {"load": 80},
+            },
+        },
+        "status": {
+            "conditions": [
+                {"type": "Selected", "status": "True"},
+                {"type": "AllInjected", "status": "True"},
+            ],
+            "experiment": {
+                "desiredPhase": "Run",
+                "containerRecords": [{"phase": "Injected"}],
+            },
+        },
+    }
+
+    assert normalize_experiment("stresschaos", payload) == {
+        "kind": "experiment",
+        "type": "cpu-stress",
+        "name": "cpu-stress-025e18",
+        "status": "running",
+        "targetKind": "deployment",
+        "target": "workload-api",
+        "updatedAt": "2026-04-04T15:59:17Z",
+        "durationSeconds": 60,
+        "cpuLoad": 80,
     }
 
 
@@ -97,6 +141,7 @@ def test_settle_experiment_status_marks_old_pod_kills_recovered():
         "type": "pod-kill",
         "name": "pod-kill-3eacfc",
         "status": "running",
+        "targetKind": None,
         "target": "workload-api-old-pod",
         "updatedAt": "2026-04-04T14:59:32Z",
     }
@@ -106,6 +151,7 @@ def test_settle_experiment_status_marks_old_pod_kills_recovered():
         "type": "pod-kill",
         "name": "pod-kill-3eacfc",
         "status": "recovered",
+        "targetKind": None,
         "target": "workload-api-old-pod",
         "updatedAt": "2026-04-04T14:59:32Z",
     }
@@ -117,6 +163,7 @@ def test_settle_experiment_status_keeps_live_pod_kills_running():
         "type": "pod-kill",
         "name": "pod-kill-3eacfc",
         "status": "running",
+        "targetKind": None,
         "target": "workload-api-live-pod",
         "updatedAt": "2026-04-04T14:59:32Z",
     }

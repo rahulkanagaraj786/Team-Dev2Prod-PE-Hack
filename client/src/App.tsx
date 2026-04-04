@@ -60,6 +60,20 @@ const experimentActions: Array<{
   },
 ]
 
+function formatExperimentType(value: unknown) {
+  const experimentType = String(value ?? 'fault-run')
+  if (experimentType === 'pod-kill') {
+    return 'Pod restart'
+  }
+  if (experimentType === 'network-latency') {
+    return 'Network latency'
+  }
+  if (experimentType === 'cpu-stress') {
+    return 'CPU pressure'
+  }
+  return formatStatusText(experimentType)
+}
+
 function ensureSelection(
   snapshot: ResourceSnapshot,
   preferredGroup: ResourceGroupName,
@@ -152,12 +166,18 @@ function buildResourceRows(resource: ResourceRecord | null) {
   if (kind === 'experiment') {
     rows.push({
       label: 'Fault',
-      value: String(resource.type ?? 'Unknown'),
+      value: formatExperimentType(resource.type),
     })
     rows.push({
       label: 'Target',
       value: String(resource.target ?? 'Waiting for target'),
     })
+    if (typeof resource.targetKind === 'string' && resource.targetKind) {
+      rows.push({
+        label: 'Scope',
+        value: formatStatusText(resource.targetKind),
+      })
+    }
     if (typeof resource.latencyMs === 'number') {
       rows.push({
         label: 'Latency',
@@ -203,12 +223,16 @@ function summarizeResource(resource: ResourceRecord) {
       }`
     case 'experiment':
       if (resource.type === 'network-latency' && typeof resource.latencyMs === 'number') {
-        return `${resource.latencyMs} ms delay • ${formatStatusText(String(resource.status ?? 'unknown'))}`
+        const duration =
+          typeof resource.durationSeconds === 'number' ? ` for ${resource.durationSeconds}s` : ''
+        return `${resource.latencyMs} ms delay${duration} • ${formatStatusText(String(resource.status ?? 'unknown'))}`
       }
       if (resource.type === 'cpu-stress' && typeof resource.cpuLoad === 'number') {
-        return `${resource.cpuLoad}% load • ${formatStatusText(String(resource.status ?? 'unknown'))}`
+        const duration =
+          typeof resource.durationSeconds === 'number' ? ` for ${resource.durationSeconds}s` : ''
+        return `${resource.cpuLoad}% load${duration} • ${formatStatusText(String(resource.status ?? 'unknown'))}`
       }
-      return `${formatStatusText(String(resource.status ?? 'unknown'))} • ${resource.type ?? 'Fault run'}`
+      return `${formatStatusText(String(resource.status ?? 'unknown'))} • ${formatExperimentType(resource.type)}`
     default:
       return formatStatusText(String(resource.status ?? 'unknown'))
   }

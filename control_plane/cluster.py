@@ -174,6 +174,7 @@ def normalize_experiment(kind: str, item: dict) -> dict:
         "type": labels.get("dev2prod.io/experiment-type", kind),
         "name": metadata.get("name"),
         "status": normalized_status,
+        "targetKind": labels.get("dev2prod.io/target-kind"),
         "target": labels.get("dev2prod.io/target-name")
         or labels.get("app.kubernetes.io/name"),
         "updatedAt": metadata.get("creationTimestamp"),
