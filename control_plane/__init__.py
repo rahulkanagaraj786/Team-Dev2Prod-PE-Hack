@@ -4,9 +4,13 @@ from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify
+from flask import Flask, Response, jsonify
 
-from control_plane.cluster import list_namespace_resources
+from control_plane.cluster import (
+    get_resource_detail,
+    get_resource_events,
+    list_namespace_resources,
+)
 
 
 def read_flag(name: str, default: bool = False) -> bool:
@@ -40,6 +44,10 @@ def get_workload_status(base_url: str, timeout: float = 1.0) -> dict:
         }
 
     return {"status": "healthy"}
+
+
+def serialize_sse(event_type: str, data: dict) -> str:
+    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
 
 def create_app() -> Flask:
@@ -86,5 +94,44 @@ def create_app() -> Flask:
     @app.get("/api/resources")
     def resources():
         return jsonify(data=list_namespace_resources(app.config))
+
+    @app.get("/api/resources/<kind>/<name>")
+    def resource_detail(kind: str, name: str):
+        resource = get_resource_detail(app.config, kind, name)
+        if resource is None:
+            return jsonify(error={"code": "not_found", "message": "We could not find that resource."}), 404
+        return jsonify(data=resource)
+
+    @app.get("/api/resources/<kind>/<name>/events")
+    def resource_events(kind: str, name: str):
+        return jsonify(data=get_resource_events(app.config, kind, name))
+
+    @app.get("/api/stream")
+    def stream():
+        def generate():
+            yield serialize_sse(
+                "cluster_snapshot",
+                {
+                    "status": {
+                        "clusterName": app.config["CLUSTER_NAME"],
+                        "namespace": app.config["CLUSTER_NAMESPACE"],
+                        "provider": app.config["CLUSTER_PROVIDER"],
+                        "mode": "cluster"
+                        if os.environ.get("KUBERNETES_SERVICE_HOST")
+                        else "local",
+                        "scopeLocked": True,
+                        "controlPlane": {"status": "healthy"},
+                        "workload": get_workload_status(app.config["WORKLOAD_API_URL"]),
+                        "chaosMesh": {
+                            "status": "ready"
+                            if app.config["CHAOS_MESH_ENABLED"]
+                            else "unavailable"
+                        },
+                    },
+                    "resources": list_namespace_resources(app.config),
+                },
+            )
+
+        return Response(generate(), mimetype="text/event-stream")
 
     return app

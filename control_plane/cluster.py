@@ -7,6 +7,13 @@ from urllib.request import Request, urlopen
 
 SERVICE_ACCOUNT_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 SERVICE_ACCOUNT_CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+RESOURCE_GROUPS = {
+    "deployment": "deployments",
+    "replicaset": "replicaSets",
+    "pod": "pods",
+    "service": "services",
+    "experiment": "experiments",
+}
 
 
 def is_cluster_mode() -> bool:
@@ -228,3 +235,29 @@ def list_namespace_resources(config: dict) -> dict:
 
     namespace = config["CLUSTER_NAMESPACE"]
     return load_cluster_resources(namespace)
+
+
+def normalize_kind(kind: str) -> str:
+    return kind.replace("-", "").replace("_", "").lower()
+
+
+def get_resource_detail(config: dict, kind: str, name: str) -> dict | None:
+    payload = list_namespace_resources(config)
+    resource_group = RESOURCE_GROUPS.get(normalize_kind(kind))
+    if resource_group is None:
+        return None
+
+    resources = payload["resources"][resource_group]
+    return next((resource for resource in resources if resource.get("name") == name), None)
+
+
+def get_resource_events(config: dict, kind: str, name: str) -> list[dict]:
+    payload = list_namespace_resources(config)
+    normalized_kind = normalize_kind(kind)
+
+    return [
+        event
+        for event in payload["events"]
+        if event.get("resourceName") == name
+        and normalize_kind(event.get("resourceKind", "")) == normalized_kind
+    ]

@@ -124,3 +124,96 @@ def test_resources_return_cluster_payload(monkeypatch):
     assert payload["resources"]["pods"][0]["name"] == "dev2prod-api-123"
     assert payload["resources"]["experiments"][0]["name"] == "latency-test"
     assert payload["events"][0]["reason"] == "Ready"
+
+
+def test_resource_detail_returns_named_resource(monkeypatch):
+    app = create_app()
+
+    def fake_resource_detail(config, kind, name):
+        assert kind == "deployment"
+        assert name == "dev2prod-api"
+        return {"kind": "deployment", "name": "dev2prod-api", "status": "healthy"}
+
+    monkeypatch.setattr(control_plane, "get_resource_detail", fake_resource_detail)
+
+    with app.test_client() as client:
+        response = client.get("/api/resources/deployment/dev2prod-api")
+
+    assert response.status_code == 200
+    assert response.get_json()["data"] == {
+        "kind": "deployment",
+        "name": "dev2prod-api",
+        "status": "healthy",
+    }
+
+
+def test_resource_detail_returns_not_found(monkeypatch):
+    app = create_app()
+
+    monkeypatch.setattr(control_plane, "get_resource_detail", lambda config, kind, name: None)
+
+    with app.test_client() as client:
+        response = client.get("/api/resources/pod/missing-pod")
+
+    assert response.status_code == 404
+    assert response.get_json()["error"]["code"] == "not_found"
+
+
+def test_resource_events_return_filtered_items(monkeypatch):
+    app = create_app()
+
+    def fake_resource_events(config, kind, name):
+        assert kind == "pod"
+        assert name == "dev2prod-api-123"
+        return [
+            {
+                "name": "pod-ready",
+                "reason": "Ready",
+                "resourceKind": "Pod",
+                "resourceName": "dev2prod-api-123",
+            }
+        ]
+
+    monkeypatch.setattr(control_plane, "get_resource_events", fake_resource_events)
+
+    with app.test_client() as client:
+        response = client.get("/api/resources/pod/dev2prod-api-123/events")
+
+    assert response.status_code == 200
+    assert response.get_json()["data"] == [
+        {
+            "name": "pod-ready",
+            "reason": "Ready",
+            "resourceKind": "Pod",
+            "resourceName": "dev2prod-api-123",
+        }
+    ]
+
+
+def test_stream_returns_cluster_snapshot(monkeypatch):
+    app = create_app()
+
+    monkeypatch.setattr(
+        control_plane,
+        "get_workload_status",
+        lambda base_url, timeout=1.0: {"status": "healthy"},
+    )
+    monkeypatch.setattr(
+        control_plane,
+        "list_namespace_resources",
+        lambda config: {
+            "mode": "local",
+            "namespace": "dev2prod",
+            "resources": {"deployments": [], "replicaSets": [], "pods": [], "services": [], "experiments": []},
+            "events": [],
+        },
+    )
+
+    with app.test_client() as client:
+        response = client.get("/api/stream")
+
+    body = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert response.mimetype == "text/event-stream"
+    assert "event: cluster_snapshot" in body
+    assert '"status": {"clusterName": "dev2prod-local"' in body
