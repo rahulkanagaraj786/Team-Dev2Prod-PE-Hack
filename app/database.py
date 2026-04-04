@@ -39,7 +39,7 @@ def init_db(app):
 
 
 def create_tables():
-    from app.models import Link
+    from app.models import Event, Link
 
     db.connect(reuse_if_open=True)
-    db.create_tables([Link], safe=True)
+    db.create_tables([Link, Event], safe=True)

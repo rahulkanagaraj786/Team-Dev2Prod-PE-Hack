@@ -7,6 +7,7 @@ from peewee import IntegrityError
 
 from app.errors import error_response
 from app.models import Link
+from app.services import record_event
 
 links_bp = Blueprint("links", __name__)
 EDITABLE_FIELDS = {"targetUrl", "userId", "title", "isActive"}
@@ -103,6 +104,14 @@ def resolve_link(slug):
     link.visit_count += 1
     link.updated_at = datetime.now(UTC)
     link.save()
+    record_event(
+        link,
+        "resolved",
+        {
+            "short_code": link.slug,
+            "original_url": link.target_url,
+        },
+    )
 
     return redirect(link.target_url, code=302)
 
@@ -159,6 +168,14 @@ def update_link(slug):
 
     link.updated_at = datetime.now(UTC)
     link.save()
+    record_event(
+        link,
+        "updated",
+        {
+            "short_code": link.slug,
+            "original_url": link.target_url,
+        },
+    )
 
     return jsonify(data=serialize_link(link))
 
@@ -179,5 +196,14 @@ def create_link():
         )
     except IntegrityError:
         return error_response("conflict", "This slug is already in use.", 409)
+
+    record_event(
+        link,
+        "created",
+        {
+            "short_code": link.slug,
+            "original_url": link.target_url,
+        },
+    )
 
     return jsonify(data=serialize_link(link)), 201
