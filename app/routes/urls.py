@@ -51,12 +51,16 @@ def validate_original_url(original_url):
 
 
 def validate_user_id(user_id):
-    if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
+    if user_id is not None and (
+        isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0
+    ):
         return "User ID must be a positive number."
     return None
 
 
 def validate_user_reference(user_id):
+    if user_id is None:
+        return None
     if User.select().where(User.id == user_id).exists():
         return None
     return "Choose an existing user."
@@ -199,7 +203,7 @@ def create_url():
     if user_id_error:
         return error_response("validation_failed", user_id_error, 422)
 
-    user_reference_error = validate_user_reference(payload["user_id"])
+    user_reference_error = validate_user_reference(payload.get("user_id"))
     if user_reference_error:
         return error_response("validation_failed", user_reference_error, 422)
 
@@ -223,7 +227,7 @@ def create_url():
     try:
         link = Link.create(
             slug=short_code,
-            user_id=payload["user_id"],
+            user_id=payload.get("user_id"),
             target_url=payload["original_url"].strip(),
             title=payload.get("title").strip() if payload.get("title", "").strip() else None,
         )
@@ -237,7 +241,7 @@ def create_url():
         try:
             link = Link.create(
                 slug=short_code,
-                user_id=payload["user_id"],
+                user_id=payload.get("user_id"),
                 target_url=payload["original_url"].strip(),
                 title=payload.get("title").strip()
                 if payload.get("title", "").strip()
@@ -288,10 +292,10 @@ def update_url(url_id):
         user_id_error = validate_user_id(payload.get("user_id"))
         if user_id_error:
             return error_response("validation_failed", user_id_error, 422)
-        user_reference_error = validate_user_reference(payload["user_id"])
+        user_reference_error = validate_user_reference(payload.get("user_id"))
         if user_reference_error:
             return error_response("validation_failed", user_reference_error, 422)
-        link.user_id = payload["user_id"]
+        link.user_id = payload.get("user_id")
 
     if "original_url" in payload:
         url_error = validate_original_url(payload.get("original_url"))
