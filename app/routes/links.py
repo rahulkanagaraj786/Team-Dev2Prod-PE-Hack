@@ -54,7 +54,9 @@ def validate_target_url(target_url):
 
 
 def validate_user_id(user_id):
-    if user_id is not None and (not isinstance(user_id, int) or user_id <= 0):
+    if user_id is not None and (
+        isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0
+    ):
         return "User ID must be a positive number."
     return None
 

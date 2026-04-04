@@ -10,6 +10,7 @@ from app.services import import_users_csv
 
 users_bp = Blueprint("users", __name__)
 EDITABLE_FIELDS = {"username", "email"}
+CREATE_FIELDS = {"username", "email"}
 
 
 def format_timestamp(value):
@@ -83,6 +84,15 @@ def create_user():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return error_response("validation_failed", "A JSON body is required.", 422)
+
+    unknown_fields = set(payload) - CREATE_FIELDS
+    if unknown_fields:
+        return error_response(
+            "validation_failed",
+            "Only username and email can be provided.",
+            422,
+            details={"fields": sorted(unknown_fields)},
+        )
 
     username_error = validate_username(payload.get("username"))
     if username_error:
@@ -165,7 +175,7 @@ def bulk_import_users():
             upload.save(handle)
 
         summary = import_users_csv(temp_path)
-    except (OSError, ValueError) as error:
+    except (IntegrityError, OSError, ValueError) as error:
         return error_response("validation_failed", str(error), 422)
     finally:
         if temp_path is not None and temp_path.exists():

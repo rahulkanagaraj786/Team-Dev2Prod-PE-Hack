@@ -2,6 +2,8 @@ import csv
 from datetime import UTC, datetime
 from pathlib import Path
 
+from peewee import IntegrityError
+
 from app.database import db
 from app.models import Event, Link, User
 
@@ -165,18 +167,21 @@ def import_users_csv(path: str | Path) -> dict:
 
             for row in reader:
                 payload = normalize_user_row(row)
-                user, was_created = User.get_or_create(
-                    id=payload["id"],
-                    defaults=payload,
-                )
-                if was_created:
-                    created += 1
-                    continue
+                try:
+                    user, was_created = User.get_or_create(
+                        id=payload["id"],
+                        defaults=payload,
+                    )
+                    if was_created:
+                        created += 1
+                        continue
 
-                for field, value in payload.items():
-                    setattr(user, field, value)
-                user.save()
-                updated += 1
+                    for field, value in payload.items():
+                        setattr(user, field, value)
+                    user.save()
+                    updated += 1
+                except IntegrityError as error:
+                    raise ValueError("Seed file contains conflicting user data.") from error
     finally:
         if opened_here and not db.is_closed():
             db.close()

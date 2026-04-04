@@ -59,6 +59,53 @@ def test_create_url_rejects_missing_user(client):
     assert response.get_json()["error"]["code"] == "validation_failed"
 
 
+def test_create_url_rejects_invalid_original_url(client):
+    create_user(1)
+
+    response = client.post(
+        "/urls",
+        json={
+            "user_id": 1,
+            "original_url": "https://",
+            "title": "Broken URL",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["code"] == "validation_failed"
+
+
+def test_create_url_rejects_boolean_user_id(client):
+    response = client.post(
+        "/urls",
+        json={
+            "user_id": True,
+            "original_url": "https://example.com/test",
+            "title": "Test URL",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["message"] == "User ID must be a positive number."
+
+
+def test_create_url_rejects_unknown_fields(client):
+    create_user(1)
+
+    response = client.post(
+        "/urls",
+        json={
+            "user_id": 1,
+            "original_url": "https://example.com/test",
+            "title": "Test URL",
+            "extra": "value",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["details"] == {"fields": ["extra"]}
+
+
 def test_list_urls(client):
     create_user(1)
     create_link(1)

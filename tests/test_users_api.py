@@ -103,6 +103,20 @@ def test_create_user_rejects_invalid_schema(client):
     assert response.get_json()["error"]["code"] == "validation_failed"
 
 
+def test_create_user_rejects_unknown_fields(client):
+    response = client.post(
+        "/users",
+        json={
+            "username": "testuser",
+            "email": "testuser@example.com",
+            "role": "admin",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["details"] == {"fields": ["role"]}
+
+
 def test_update_user(client):
     create_user(1, "silvertrail15", "silvertrail15@hackstack.io")
 
@@ -127,3 +141,24 @@ def test_list_users_supports_pagination(client):
     assert response.get_json()["per_page"] == 1
     assert response.get_json()["total"] == 3
     assert response.get_json()["users"][0]["id"] == 2
+
+
+def test_bulk_import_users_rejects_conflicting_email(client):
+    create_user(1, "existing", "existing@example.com")
+    csv_payload = "\n".join(
+        [
+            "id,username,email,created_at",
+            "2,other,existing@example.com,2025-09-19 22:25:05",
+        ]
+    )
+
+    response = client.post(
+        "/users/bulk",
+        data={"file": (BytesIO(csv_payload.encode("utf-8")), "users.csv")},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 422
+    error = response.get_json()["error"]
+    assert error["code"] == "validation_failed"
+    assert error["message"] == "Seed file contains conflicting user data."

@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from secrets import choice
 from string import ascii_letters, digits
+from urllib.parse import urlparse
 
 from flask import Blueprint, jsonify, request
 from peewee import DoesNotExist, IntegrityError
@@ -11,6 +12,7 @@ from app.services import record_event
 
 urls_bp = Blueprint("urls", __name__)
 EDITABLE_FIELDS = {"user_id", "original_url", "title", "is_active"}
+CREATE_FIELDS = {"user_id", "original_url", "title", "short_code"}
 SHORT_CODE_ALPHABET = ascii_letters + digits
 
 
@@ -36,14 +38,15 @@ def validate_original_url(original_url):
         return "An original_url value is required."
 
     value = original_url.strip()
-    if not (value.startswith("http://") or value.startswith("https://")):
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return "Use a full http or https URL."
 
     return None
 
 
 def validate_user_id(user_id):
-    if not isinstance(user_id, int) or user_id <= 0:
+    if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
         return "User ID must be a positive number."
     return None
 
@@ -101,6 +104,15 @@ def create_url():
     if not isinstance(payload, dict):
         return error_response("validation_failed", "A JSON body is required.", 422)
 
+    unknown_fields = set(payload) - CREATE_FIELDS
+    if unknown_fields:
+        return error_response(
+            "validation_failed",
+            "Only user_id, original_url, title, and short_code can be provided.",
+            422,
+            details={"fields": sorted(unknown_fields)},
+        )
+
     user_id_error = validate_user_id(payload.get("user_id"))
     if user_id_error:
         return error_response("validation_failed", user_id_error, 422)
@@ -134,7 +146,7 @@ def create_url():
             slug=short_code,
             user_id=payload["user_id"],
             target_url=payload["original_url"].strip(),
-            title=payload.get("title"),
+            title=payload.get("title").strip() if payload.get("title") else None,
         )
     except IntegrityError:
         return error_response("conflict", "That short code is already in use.", 409)
