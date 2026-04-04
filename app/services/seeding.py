@@ -49,6 +49,7 @@ def parse_bool(value: str) -> bool:
 
 def normalize_url_row(row: dict) -> dict:
     return {
+        "id": int(row["id"]),
         "source_id": int(row["id"]),
         "slug": row["short_code"].strip(),
         "user_id": int(row["user_id"]),
@@ -82,6 +83,7 @@ def normalize_event_row(row: dict) -> dict:
         raise ValueError(f"Seed event references an unknown user_id: {user_id}")
 
     return {
+        "id": source_id,
         "source_id": source_id,
         "link": link,
         "user_id": user_id,

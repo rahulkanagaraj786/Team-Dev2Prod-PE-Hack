@@ -31,6 +31,7 @@ def serialize_url(link):
         "original_url": link.target_url,
         "title": link.title,
         "is_active": link.is_active,
+        "visit_count": link.visit_count,
         "created_at": format_timestamp(link.created_at),
         "updated_at": format_timestamp(link.updated_at),
     }
