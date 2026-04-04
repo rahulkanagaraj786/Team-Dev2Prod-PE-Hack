@@ -82,14 +82,18 @@ def test_resolve_link_rejects_inactive_links(client):
     response = client.get("/quiet-room", follow_redirects=False)
 
     assert response.status_code == 410
-    assert response.get_json()["error"]["message"] == "This link is inactive."
+    error = response.get_json()["error"]
+    assert error["code"] == "inactive_link"
+    assert error["message"] == "This link is inactive."
 
 
 def test_resolve_link_returns_not_found_for_missing_slug(client):
     response = client.get("/missing-room", follow_redirects=False)
 
     assert response.status_code == 404
-    assert response.get_json()["error"]["message"] == "We could not find that link."
+    error = response.get_json()["error"]
+    assert error["code"] == "not_found"
+    assert error["message"] == "We could not find that link."
 
 
 def test_update_link_changes_editable_fields(client):
@@ -131,7 +135,9 @@ def test_update_link_rejects_empty_payload(client):
     response = client.patch("/api/links/empty-update", json={})
 
     assert response.status_code == 422
-    assert response.get_json()["error"]["message"] == "Include at least one field to update."
+    error = response.get_json()["error"]
+    assert error["code"] == "validation_failed"
+    assert error["message"] == "Include at least one field to update."
 
 
 def test_update_link_rejects_invalid_active_state(client):
@@ -149,7 +155,9 @@ def test_update_link_rejects_invalid_active_state(client):
     )
 
     assert response.status_code == 422
-    assert response.get_json()["error"]["message"] == "Active status must be true or false."
+    error = response.get_json()["error"]
+    assert error["code"] == "validation_failed"
+    assert error["message"] == "Active status must be true or false."
 
 
 def test_update_link_rejects_unknown_fields(client):
@@ -167,10 +175,10 @@ def test_update_link_rejects_unknown_fields(client):
     )
 
     assert response.status_code == 422
-    assert (
-        response.get_json()["error"]["message"]
-        == "Only targetUrl, userId, title, and isActive can be updated."
-    )
+    error = response.get_json()["error"]
+    assert error["code"] == "validation_failed"
+    assert error["message"] == "Only targetUrl, userId, title, and isActive can be updated."
+    assert error["details"] == {"fields": ["description"]}
 
 
 def test_update_link_returns_not_found_for_missing_slug(client):
@@ -180,7 +188,9 @@ def test_update_link_returns_not_found_for_missing_slug(client):
     )
 
     assert response.status_code == 404
-    assert response.get_json()["error"]["message"] == "We could not find that link."
+    error = response.get_json()["error"]
+    assert error["code"] == "not_found"
+    assert error["message"] == "We could not find that link."
 
 
 def test_create_link_rejects_invalid_urls(client):
@@ -193,7 +203,9 @@ def test_create_link_rejects_invalid_urls(client):
     )
 
     assert response.status_code == 422
-    assert response.get_json()["error"]["message"] == "Use a full http or https URL."
+    error = response.get_json()["error"]
+    assert error["code"] == "validation_failed"
+    assert error["message"] == "Use a full http or https URL."
 
 
 def test_create_link_rejects_invalid_user_id(client):
@@ -207,4 +219,6 @@ def test_create_link_rejects_invalid_user_id(client):
     )
 
     assert response.status_code == 422
-    assert response.get_json()["error"]["message"] == "User ID must be a positive number."
+    error = response.get_json()["error"]
+    assert error["code"] == "validation_failed"
+    assert error["message"] == "User ID must be a positive number."

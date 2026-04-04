@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify
 
 from app.database import create_tables, init_db
+from app.errors import register_error_handlers
 from app.routes import register_routes
 
 
@@ -16,6 +17,7 @@ def create_app():
     create_tables()
 
     register_routes(app)
+    register_error_handlers(app)
 
     @app.route("/health")
     def health():

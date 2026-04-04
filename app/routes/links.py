@@ -5,6 +5,7 @@ from flask import Blueprint, jsonify, redirect, request
 from peewee import DoesNotExist
 from peewee import IntegrityError
 
+from app.errors import error_response
 from app.models import Link
 
 links_bp = Blueprint("links", __name__)
@@ -85,7 +86,7 @@ def list_links():
 def get_link(slug):
     link = get_link_or_none(slug)
     if link is None:
-        return jsonify(error={"message": "We could not find that link."}), 404
+        return error_response("not_found", "We could not find that link.", 404)
 
     return jsonify(data=serialize_link(link))
 
@@ -94,10 +95,10 @@ def get_link(slug):
 def resolve_link(slug):
     link = get_link_or_none(slug)
     if link is None:
-        return jsonify(error={"message": "We could not find that link."}), 404
+        return error_response("not_found", "We could not find that link.", 404)
 
     if not link.is_active:
-        return jsonify(error={"message": "This link is inactive."}), 410
+        return error_response("inactive_link", "This link is inactive.", 410)
 
     link.visit_count += 1
     link.updated_at = datetime.now(UTC)
@@ -110,44 +111,50 @@ def resolve_link(slug):
 def update_link(slug):
     link = get_link_or_none(slug)
     if link is None:
-        return jsonify(error={"message": "We could not find that link."}), 404
+        return error_response("not_found", "We could not find that link.", 404)
 
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict) or not payload:
-        return jsonify(error={"message": "Include at least one field to update."}), 422
+        return error_response(
+            "validation_failed",
+            "Include at least one field to update.",
+            422,
+        )
 
     unknown_fields = set(payload) - EDITABLE_FIELDS
     if unknown_fields:
-        return (
-            jsonify(
-                error={
-                    "message": "Only targetUrl, userId, title, and isActive can be updated."
-                }
-            ),
+        return error_response(
+            "validation_failed",
+            "Only targetUrl, userId, title, and isActive can be updated.",
             422,
+            details={"fields": sorted(unknown_fields)},
         )
 
     if "targetUrl" in payload:
         target_error = validate_target_url(payload.get("targetUrl"))
         if target_error:
-            return jsonify(error={"message": target_error}), 422
+            return error_response("validation_failed", target_error, 422)
         link.target_url = payload["targetUrl"].strip()
 
     if "userId" in payload:
         user_id_error = validate_user_id(payload.get("userId"))
         if user_id_error:
-            return jsonify(error={"message": user_id_error}), 422
+            return error_response("validation_failed", user_id_error, 422)
         link.user_id = payload["userId"]
 
     if "title" in payload:
         title_error = validate_title(payload.get("title"))
         if title_error:
-            return jsonify(error={"message": title_error}), 422
+            return error_response("validation_failed", title_error, 422)
         link.title = payload["title"].strip()
 
     if "isActive" in payload:
         if not isinstance(payload["isActive"], bool):
-            return jsonify(error={"message": "Active status must be true or false."}), 422
+            return error_response(
+                "validation_failed",
+                "Active status must be true or false.",
+                422,
+            )
         link.is_active = payload["isActive"]
 
     link.updated_at = datetime.now(UTC)
@@ -161,7 +168,7 @@ def create_link():
     payload = request.get_json(silent=True)
     error = validate_payload(payload)
     if error:
-        return jsonify(error={"message": error}), 422
+        return error_response("validation_failed", error, 422)
 
     try:
         link = Link.create(
@@ -171,6 +178,6 @@ def create_link():
             title=payload.get("title"),
         )
     except IntegrityError:
-        return jsonify(error={"message": "This slug is already in use."}), 409
+        return error_response("conflict", "This slug is already in use.", 409)
 
     return jsonify(data=serialize_link(link)), 201
