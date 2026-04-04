@@ -1,6 +1,10 @@
+from datetime import datetime
+
 from control_plane.cluster import (
     get_resource_events,
+    list_cluster_experiments,
     normalize_experiment,
+    should_prune_experiment,
     settle_experiment_status,
 )
 
@@ -169,6 +173,98 @@ def test_settle_experiment_status_keeps_live_pod_kills_running():
     }
 
     assert settle_experiment_status(payload, {"workload-api-live-pod"})["status"] == "running"
+
+
+def test_should_prune_experiment_after_grace_period():
+    payload = {
+        "kind": "experiment",
+        "type": "network-latency",
+        "name": "network-latency-a84aa3",
+        "status": "recovered",
+        "targetKind": "service",
+        "target": "workload-api",
+        "updatedAt": "2026-04-04T15:31:27Z",
+        "durationSeconds": 60,
+    }
+
+    assert should_prune_experiment(
+        payload,
+        now=datetime.fromisoformat("2026-04-04T15:36:00+00:00"),
+    )
+
+
+def test_should_not_prune_recent_recovered_experiment():
+    payload = {
+        "kind": "experiment",
+        "type": "network-latency",
+        "name": "network-latency-a84aa3",
+        "status": "recovered",
+        "targetKind": "service",
+        "target": "workload-api",
+        "updatedAt": "2026-04-04T15:31:27Z",
+        "durationSeconds": 60,
+    }
+
+    assert not should_prune_experiment(
+        payload,
+        now=datetime.fromisoformat("2026-04-04T15:33:00+00:00"),
+    )
+
+
+def test_list_cluster_experiments_prunes_completed_runs(monkeypatch):
+    deleted_paths: list[str] = []
+
+    def fake_load_kubernetes_json(path: str):
+        if "networkchaos" not in path:
+            return {"items": []}
+
+        return {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "network-latency-a84aa3",
+                        "creationTimestamp": "2026-04-04T15:31:27Z",
+                        "labels": {
+                            "dev2prod.io/experiment-type": "network-latency",
+                            "dev2prod.io/target-kind": "service",
+                            "dev2prod.io/target-name": "workload-api",
+                        },
+                    },
+                    "spec": {
+                        "duration": "60s",
+                        "delay": {"latency": "120ms"},
+                    },
+                    "status": {
+                        "conditions": [
+                            {"type": "AllRecovered", "status": "True"},
+                        ],
+                        "experiment": {
+                            "containerRecords": [{"phase": "Recovered"}],
+                        },
+                    },
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        "control_plane.cluster.load_kubernetes_json",
+        fake_load_kubernetes_json,
+    )
+    monkeypatch.setattr(
+        "control_plane.cluster.delete_kubernetes_resource",
+        lambda path: deleted_paths.append(path),
+    )
+    monkeypatch.setattr(
+        "control_plane.cluster.should_prune_experiment",
+        lambda experiment, now=None: True,
+    )
+
+    experiments = list_cluster_experiments("dev2prod", {"workload-api-live-pod"})
+
+    assert experiments == []
+    assert deleted_paths == [
+        "/apis/chaos-mesh.org/v1alpha1/namespaces/dev2prod/networkchaos/network-latency-a84aa3"
+    ]
 
 
 def test_get_resource_events_matches_chaos_resource_kinds(monkeypatch):

@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 from control_plane.cluster import (
     build_api_base,
     is_cluster_mode,
+    list_cluster_experiments,
     load_kubernetes_json,
     normalize_experiment,
     read_service_account_token,
@@ -219,22 +220,11 @@ def list_experiments(config: dict) -> list[dict]:
         return []
 
     namespace = config["CLUSTER_NAMESPACE"]
-    experiments: list[dict] = []
-    for experiment_type, resource in EXPERIMENT_RESOURCE_TYPES.items():
-        try:
-            response = load_kubernetes_json(
-                f"/apis/chaos-mesh.org/v1alpha1/namespaces/{namespace}/{resource['resource']}"
-            )
-        except (HTTPError, URLError):
-            continue
-
-        for item in response.get("items", []):
-            normalized = normalize_experiment(resource["resource"], item)
-            normalized["type"] = experiment_type
-            normalized["target"] = item.get("metadata", {}).get("labels", {}).get("dev2prod.io/target-name")
-            experiments.append(normalized)
-
-    return sorted(experiments, key=lambda item: item.get("updatedAt") or "", reverse=True)
+    return sorted(
+        list_cluster_experiments(namespace, set()),
+        key=lambda item: item.get("updatedAt") or "",
+        reverse=True,
+    )
 
 
 def read_experiment(namespace: str, experiment_type: str, name: str) -> dict | None:

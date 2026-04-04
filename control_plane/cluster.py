@@ -1,6 +1,7 @@
 import json
 import os
 import ssl
+from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -15,6 +16,8 @@ RESOURCE_GROUPS = {
     "service": "services",
     "experiment": "experiments",
 }
+EXPERIMENT_RESOURCE_TYPES = ("podchaos", "networkchaos", "stresschaos")
+EXPERIMENT_CLEANUP_GRACE_SECONDS = 180
 
 
 def is_cluster_mode() -> bool:
@@ -43,6 +46,15 @@ def load_kubernetes_json(path: str, timeout: float = 2.0) -> dict:
 
 def load_kubernetes_text(path: str, timeout: float = 2.0) -> str:
     request = Request(f"{build_api_base()}{path}")
+    request.add_header("Authorization", f"Bearer {read_service_account_token()}")
+    context = ssl.create_default_context(cafile=SERVICE_ACCOUNT_CA_PATH)
+
+    with urlopen(request, timeout=timeout, context=context) as response:
+        return response.read().decode("utf-8")
+
+
+def delete_kubernetes_resource(path: str, timeout: float = 2.0):
+    request = Request(f"{build_api_base()}{path}", method="DELETE")
     request.add_header("Authorization", f"Bearer {read_service_account_token()}")
     context = ssl.create_default_context(cafile=SERVICE_ACCOUNT_CA_PATH)
 
@@ -213,6 +225,62 @@ def settle_experiment_status(experiment: dict, active_pod_names: set[str]) -> di
     return next_experiment
 
 
+def parse_kubernetes_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def should_prune_experiment(experiment: dict, now: datetime | None = None) -> bool:
+    if experiment.get("status") != "recovered":
+        return False
+
+    updated_at = parse_kubernetes_timestamp(experiment.get("updatedAt"))
+    if updated_at is None:
+        return False
+
+    current_time = now or datetime.now(timezone.utc)
+    base_age = EXPERIMENT_CLEANUP_GRACE_SECONDS
+    duration_seconds = experiment.get("durationSeconds")
+    if isinstance(duration_seconds, int):
+        base_age += duration_seconds
+
+    return current_time >= updated_at + timedelta(seconds=base_age)
+
+
+def list_cluster_experiments(namespace: str, active_pod_names: set[str]) -> list[dict]:
+    experiments: list[dict] = []
+    for kind in EXPERIMENT_RESOURCE_TYPES:
+        try:
+            response = load_kubernetes_json(
+                f"/apis/chaos-mesh.org/v1alpha1/namespaces/{namespace}/{kind}"
+            )
+        except (HTTPError, URLError):
+            continue
+
+        for item in response.get("items", []):
+            experiment = settle_experiment_status(
+                normalize_experiment(kind, item),
+                active_pod_names,
+            )
+            if should_prune_experiment(experiment):
+                try:
+                    delete_kubernetes_resource(
+                        f"/apis/chaos-mesh.org/v1alpha1/namespaces/{namespace}/{kind}/{quote(experiment['name'])}"
+                    )
+                except (HTTPError, URLError):
+                    experiments.append(experiment)
+                continue
+
+            experiments.append(experiment)
+
+    return experiments
+
+
 def list_local_resources(config: dict) -> dict:
     workload_name = config.get("WORKLOAD_DEPLOYMENT_NAME", "workload-api")
     control_plane_name = config.get("CONTROL_PLANE_DEPLOYMENT_NAME", "control-plane")
@@ -268,27 +336,12 @@ def load_cluster_resources(namespace: str) -> dict:
     services = load_kubernetes_json(f"/api/v1/namespaces/{namespace}/services")
     events = load_kubernetes_json(f"/api/v1/namespaces/{namespace}/events")
 
-    experiments = []
     active_pod_names = {
         item.get("metadata", {}).get("name")
         for item in pods.get("items", [])
         if item.get("metadata", {}).get("name")
     }
-    for kind in ("podchaos", "networkchaos", "stresschaos"):
-        try:
-            response = load_kubernetes_json(
-                f"/apis/chaos-mesh.org/v1alpha1/namespaces/{namespace}/{kind}"
-            )
-        except (HTTPError, URLError):
-            continue
-
-        experiments.extend(
-            settle_experiment_status(
-                normalize_experiment(kind, item),
-                active_pod_names,
-            )
-            for item in response.get("items", [])
-        )
+    experiments = list_cluster_experiments(namespace, active_pod_names)
 
     return {
         "mode": "cluster",
