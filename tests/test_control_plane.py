@@ -190,6 +190,33 @@ def test_resource_events_return_filtered_items(monkeypatch):
     ]
 
 
+def test_resource_logs_return_payload(monkeypatch):
+    app = create_app()
+
+    def fake_resource_logs(config, kind, name):
+        assert kind == "pod"
+        assert name == "dev2prod-api-123"
+        return {
+            "kind": "pod",
+            "name": "dev2prod-api-123",
+            "entries": [{"line": "ready to serve traffic"}],
+            "note": "Showing the latest lines from this pod.",
+        }
+
+    monkeypatch.setattr(control_plane, "get_resource_logs", fake_resource_logs)
+
+    with app.test_client() as client:
+        response = client.get("/api/resources/pod/dev2prod-api-123/logs")
+
+    assert response.status_code == 200
+    assert response.get_json()["data"] == {
+        "kind": "pod",
+        "name": "dev2prod-api-123",
+        "entries": [{"line": "ready to serve traffic"}],
+        "note": "Showing the latest lines from this pod.",
+    }
+
+
 def test_stream_returns_cluster_snapshot(monkeypatch):
     app = create_app()
 

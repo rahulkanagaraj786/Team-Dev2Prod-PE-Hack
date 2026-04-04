@@ -2,6 +2,7 @@ import json
 import os
 import ssl
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 
@@ -38,6 +39,15 @@ def load_kubernetes_json(path: str, timeout: float = 2.0) -> dict:
 
     with urlopen(request, timeout=timeout, context=context) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def load_kubernetes_text(path: str, timeout: float = 2.0) -> str:
+    request = Request(f"{build_api_base()}{path}")
+    request.add_header("Authorization", f"Bearer {read_service_account_token()}")
+    context = ssl.create_default_context(cafile=SERVICE_ACCOUNT_CA_PATH)
+
+    with urlopen(request, timeout=timeout, context=context) as response:
+        return response.read().decode("utf-8")
 
 
 def normalize_deployment(item: dict) -> dict:
@@ -261,3 +271,57 @@ def get_resource_events(config: dict, kind: str, name: str) -> list[dict]:
         if event.get("resourceName") == name
         and normalize_kind(event.get("resourceKind", "")) == normalized_kind
     ]
+
+
+def get_resource_logs(config: dict, kind: str, name: str) -> dict | None:
+    resource = get_resource_detail(config, kind, name)
+    if resource is None:
+        return None
+
+    normalized_kind = normalize_kind(kind)
+
+    if not is_cluster_mode():
+        return {
+            "kind": resource.get("kind"),
+            "name": name,
+            "entries": [],
+            "note": (
+                "Local mode keeps the stack reachable, but raw pod logs appear after the "
+                "cluster log endpoint is connected."
+            ),
+        }
+
+    if normalized_kind != "pod":
+        return {
+            "kind": resource.get("kind"),
+            "name": name,
+            "entries": [],
+            "note": "Select a pod to inspect raw container logs.",
+        }
+
+    namespace = config["CLUSTER_NAMESPACE"]
+
+    try:
+        log_text = load_kubernetes_text(
+            f"/api/v1/namespaces/{namespace}/pods/{quote(name)}/log?tailLines=80"
+        )
+    except (HTTPError, URLError):
+        return {
+            "kind": resource.get("kind"),
+            "name": name,
+            "entries": [],
+            "note": "Logs are unavailable for this pod right now.",
+        }
+
+    entries = [{"line": line} for line in log_text.splitlines()[-80:] if line.strip()]
+
+    return {
+        "kind": resource.get("kind"),
+        "name": name,
+        "entries": entries,
+        "note": (
+            "Showing the latest lines from this pod."
+            if entries
+            else "The pod log stream is empty right now."
+        ),
+    }

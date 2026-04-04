@@ -9,6 +9,7 @@ from flask import Flask, Response, jsonify
 from control_plane.cluster import (
     get_resource_detail,
     get_resource_events,
+    get_resource_logs,
     list_namespace_resources,
 )
 
@@ -115,6 +116,13 @@ def create_app() -> Flask:
     @app.get("/api/resources/<kind>/<name>/events")
     def resource_events(kind: str, name: str):
         return jsonify(data=get_resource_events(app.config, kind, name))
+
+    @app.get("/api/resources/<kind>/<name>/logs")
+    def resource_logs(kind: str, name: str):
+        logs = get_resource_logs(app.config, kind, name)
+        if logs is None:
+            return jsonify(error={"code": "not_found", "message": "We could not find that resource."}), 404
+        return jsonify(data=logs)
 
     @app.get("/api/stream")
     def stream():
