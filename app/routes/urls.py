@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from secrets import choice
 from string import ascii_letters, digits
@@ -8,7 +9,7 @@ from peewee import DoesNotExist, IntegrityError
 
 from app.database import sync_primary_key_sequence
 from app.errors import error_response
-from app.models import Link, User
+from app.models import Event, Link, User
 from app.services import record_event
 
 urls_bp = Blueprint("urls", __name__)
@@ -327,3 +328,35 @@ def delete_url(url_id):
         )
 
     return ("", 204)
+
+
+def serialize_url_event(event):
+    details = event.details
+    if details is not None:
+        try:
+            details = json.loads(details)
+        except json.JSONDecodeError:
+            pass
+
+    return {
+        "id": event.id,
+        "url_id": event.link_id,
+        "user_id": event.user_id,
+        "event_type": event.event_type,
+        "timestamp": format_timestamp(event.timestamp),
+        "details": details,
+    }
+
+
+@urls_bp.get("/urls/<int:url_id>/events")
+def list_url_events(url_id):
+    link = get_url_or_none(url_id)
+    if link is None:
+        return error_response("not_found", "We could not find that URL.", 404)
+
+    events = (
+        Event.select()
+        .where(Event.link == link)
+        .order_by(Event.id)
+    )
+    return jsonify([serialize_url_event(event) for event in events])

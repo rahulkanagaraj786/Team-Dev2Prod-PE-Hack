@@ -75,6 +75,16 @@ def parse_positive_int_query(value, field_name):
     return parsed
 
 
+@events_bp.get("/events/<int:event_id>")
+def get_event(event_id):
+    try:
+        event = Event.get_by_id(event_id)
+    except DoesNotExist:
+        return error_response("not_found", "We could not find that event.", 404)
+
+    return jsonify(serialize_event(event))
+
+
 @events_bp.get("/events")
 def list_events():
     events = Event.select().order_by(Event.id)
