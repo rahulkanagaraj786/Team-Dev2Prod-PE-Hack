@@ -7,6 +7,7 @@ from app.models.link import Link
 
 
 class Event(BaseModel):
+    source_id = IntegerField(unique=True, null=True)
     link = ForeignKeyField(Link, backref="events", on_delete="CASCADE")
     user_id = IntegerField(null=True)
     event_type = CharField(max_length=32)
