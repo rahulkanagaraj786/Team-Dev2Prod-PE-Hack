@@ -43,3 +43,35 @@ def create_tables():
 
     db.connect(reuse_if_open=True)
     db.create_tables([User, Link, Event], safe=True)
+    ensure_schema()
+
+
+def ensure_schema():
+    ensure_nullable_integer_column("link", "source_id")
+    ensure_nullable_integer_column("event", "source_id")
+    ensure_unique_index("link_source_id_uq", "link", "source_id")
+    ensure_unique_index("event_source_id_uq", "event", "source_id")
+
+
+def ensure_nullable_integer_column(table_name, column_name):
+    if table_name not in db.get_tables():
+        return
+
+    existing_columns = {column.name for column in db.get_columns(table_name)}
+    if column_name in existing_columns:
+        return
+
+    db.execute_sql(f"ALTER TABLE {table_name} ADD COLUMN {column_name} INTEGER")
+
+
+def ensure_unique_index(index_name, table_name, column_name):
+    if table_name not in db.get_tables():
+        return
+
+    existing_columns = {column.name for column in db.get_columns(table_name)}
+    if column_name not in existing_columns:
+        return
+
+    db.execute_sql(
+        f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} ON {table_name} ({column_name})"
+    )
