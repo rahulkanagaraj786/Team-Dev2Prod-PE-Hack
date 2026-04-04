@@ -135,6 +135,19 @@ def test_create_user_rejects_unknown_fields(client):
     assert response.get_json()["error"]["details"] == {"fields": ["role"]}
 
 
+def test_create_user_rejects_overlong_username(client):
+    response = client.post(
+        "/users",
+        json={
+            "username": "x" * 81,
+            "email": "testuser@example.com",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["message"] == "Username must be 80 characters or fewer."
+
+
 def test_update_user(client):
     create_user(1, "silvertrail15", "silvertrail15@hackstack.io")
 

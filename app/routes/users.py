@@ -11,6 +11,8 @@ from app.services import import_users_csv
 users_bp = Blueprint("users", __name__)
 EDITABLE_FIELDS = {"username", "email"}
 CREATE_FIELDS = {"username", "email"}
+USERNAME_MAX_LENGTH = 80
+EMAIL_MAX_LENGTH = 255
 
 
 def format_timestamp(value):
@@ -29,6 +31,8 @@ def serialize_user(user):
 def validate_username(username):
     if not isinstance(username, str) or not username.strip():
         return "Username must be plain text."
+    if len(username.strip()) > USERNAME_MAX_LENGTH:
+        return f"Username must be {USERNAME_MAX_LENGTH} characters or fewer."
     return None
 
 
@@ -36,6 +40,8 @@ def validate_email(email):
     if not isinstance(email, str) or not email.strip():
         return "Email is required."
     candidate = email.strip().lower()
+    if len(candidate) > EMAIL_MAX_LENGTH:
+        return f"Email must be {EMAIL_MAX_LENGTH} characters or fewer."
     if "@" not in candidate or "." not in candidate.split("@")[-1]:
         return "Email must be valid."
     return None

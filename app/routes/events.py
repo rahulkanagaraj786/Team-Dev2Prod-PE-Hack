@@ -8,6 +8,7 @@ from app.models import Event, Link, User
 
 events_bp = Blueprint("events", __name__)
 CREATE_FIELDS = {"url_id", "user_id", "event_type", "details"}
+EVENT_TYPE_MAX_LENGTH = 32
 
 
 def format_timestamp(value):
@@ -24,7 +25,7 @@ def serialize_event(event):
 
     return {
         "id": event.id,
-        "url_id": event.link.id,
+        "url_id": event.link_id,
         "user_id": event.user_id,
         "event_type": event.event_type,
         "timestamp": format_timestamp(event.timestamp),
@@ -35,6 +36,8 @@ def serialize_event(event):
 def validate_event_type(event_type):
     if not isinstance(event_type, str) or not event_type.strip():
         return "event_type must be plain text."
+    if len(event_type.strip()) > EVENT_TYPE_MAX_LENGTH:
+        return f"event_type must be {EVENT_TYPE_MAX_LENGTH} characters or fewer."
     return None
 
 
@@ -59,16 +62,38 @@ def get_link_or_none(url_id):
         return None
 
 
+def parse_positive_int_query(value, field_name):
+    if value is None:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        raise ValueError(f"{field_name} must be a positive number.")
+    if not candidate.isdigit():
+        raise ValueError(f"{field_name} must be a positive number.")
+    parsed = int(candidate)
+    if parsed <= 0:
+        raise ValueError(f"{field_name} must be a positive number.")
+    return parsed
+
+
 @events_bp.get("/events")
 def list_events():
-    events = Event.select().order_by(Event.timestamp.desc(), Event.id.desc())
+    events = Event.select().order_by(Event.id)
 
-    url_id = request.args.get("url_id", type=int)
-    if url_id is not None:
+    raw_url_id = request.args.get("url_id")
+    if raw_url_id is not None:
+        try:
+            url_id = parse_positive_int_query(raw_url_id, "url_id")
+        except ValueError as error:
+            return error_response("validation_failed", str(error), 422)
         events = events.where(Event.link == url_id)
 
-    user_id = request.args.get("user_id", type=int)
-    if user_id is not None:
+    raw_user_id = request.args.get("user_id")
+    if raw_user_id is not None:
+        try:
+            user_id = parse_positive_int_query(raw_user_id, "user_id")
+        except ValueError as error:
+            return error_response("validation_failed", str(error), 422)
         events = events.where(Event.user_id == user_id)
 
     event_type = request.args.get("event_type")
@@ -115,6 +140,12 @@ def create_event():
 
     details = payload.get("details")
     if details is not None:
+        if not isinstance(details, dict):
+            return error_response(
+                "validation_failed",
+                "details must be a JSON object.",
+                422,
+            )
         try:
             details = json.dumps(details, sort_keys=True)
         except TypeError:

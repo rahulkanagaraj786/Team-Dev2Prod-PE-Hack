@@ -142,7 +142,7 @@ def test_import_urls_csv_creates_links(app, tmp_path):
     summary = import_urls_csv(csv_path)
 
     assert summary == {"created": 1, "updated": 0, "total": 1}
-    link = Link.get(Link.slug == "rp4z9h")
+    link = Link.get(Link.slug == "rP4Z9h")
     assert link.source_id == 1
     assert link.user_id == 9
     assert link.title == "Status board journey"

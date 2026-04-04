@@ -140,6 +140,13 @@ def test_list_urls_supports_user_filter(client):
     assert response.get_json()[0]["user_id"] == 2
 
 
+def test_list_urls_rejects_invalid_user_filter(client):
+    response = client.get("/urls?user_id=abc")
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["message"] == "user_id must be a positive number."
+
+
 def test_list_urls_supports_active_filter(client):
     create_user(1)
     active_link = create_link(1, slug="active1")
@@ -153,6 +160,31 @@ def test_list_urls_supports_active_filter(client):
     assert len(response.get_json()) == 1
     assert response.get_json()[0]["id"] == active_link.id
     assert response.get_json()[0]["is_active"] is True
+
+
+def test_list_urls_returns_stable_id_order(client):
+    create_user(1)
+    first_link = Link.create(
+        slug="older01",
+        user_id=1,
+        target_url="https://example.com/older",
+        title="Older",
+        created_at=datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC),
+        updated_at=datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC),
+    )
+    second_link = Link.create(
+        slug="newer01",
+        user_id=1,
+        target_url="https://example.com/newer",
+        title="Newer",
+        created_at=datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC),
+    )
+
+    response = client.get("/urls")
+
+    assert response.status_code == 200
+    assert [row["id"] for row in response.get_json()] == [first_link.id, second_link.id]
 
 
 def test_get_url_by_id(client):
@@ -192,6 +224,23 @@ def test_update_url_rejects_invalid_schema(client):
 
     assert response.status_code == 422
     assert response.get_json()["error"]["code"] == "validation_failed"
+
+
+def test_create_url_rejects_overlong_short_code(client):
+    create_user(1)
+
+    response = client.post(
+        "/urls",
+        json={
+            "user_id": 1,
+            "original_url": "https://example.com/test",
+            "title": "Test URL",
+            "short_code": "a" * 33,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["message"] == "short_code must be 32 characters or fewer."
 
 
 def test_delete_url(client):
