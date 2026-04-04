@@ -8,6 +8,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app import create_app
+from app.database import db
 
 
 @pytest.fixture()
@@ -19,6 +20,9 @@ def app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     app.config.update(TESTING=True)
 
     yield app
+
+    if not db.is_closed():
+        db.close()
 
 
 @pytest.fixture()
