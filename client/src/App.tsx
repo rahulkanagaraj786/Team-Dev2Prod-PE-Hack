@@ -322,6 +322,113 @@ function summarizeResource(resource: ResourceRecord) {
   }
 }
 
+function asNumber(value: unknown) {
+  return typeof value === 'number' ? value : 0
+}
+
+function getWorkloadDeployment(
+  snapshot: ResourceSnapshot | null,
+  clusterStatus: ClusterStatus | null,
+) {
+  if (!snapshot || !clusterStatus) {
+    return null
+  }
+
+  return (
+    snapshot.resources.deployments.find(
+      (resource) => resource.name === clusterStatus.workloadScope.deploymentName,
+    ) ?? null
+  )
+}
+
+function getWorkloadPods(snapshot: ResourceSnapshot | null, clusterStatus: ClusterStatus | null) {
+  if (!snapshot || !clusterStatus) {
+    return []
+  }
+
+  return snapshot.resources.pods.filter((resource) =>
+    resource.name.startsWith(clusterStatus.workloadScope.podPrefix),
+  )
+}
+
+function getLatestWorkloadPod(pods: ResourceRecord[]) {
+  return pods
+    .slice()
+    .sort((left, right) =>
+      String(left.updatedAt ?? '').localeCompare(String(right.updatedAt ?? '')),
+    )
+    .at(-1) ?? null
+}
+
+function buildRolloutWatch(
+  snapshot: ResourceSnapshot | null,
+  clusterStatus: ClusterStatus | null,
+  displayedResource: ResourceRecord | null,
+) {
+  const deployment = getWorkloadDeployment(snapshot, clusterStatus)
+  const pods = getWorkloadPods(snapshot, clusterStatus)
+  const latestPod = getLatestWorkloadPod(pods)
+
+  if (!clusterStatus || !deployment) {
+    return null
+  }
+
+  const desiredReplicas = asNumber(deployment.desiredReplicas)
+  const readyReplicas = asNumber(deployment.readyReplicas)
+  const readyPods = pods.filter((pod) => pod.ready).length
+  const restartingPods = pods.filter((pod) => asNumber(pod.restartCount) > 0).length
+  const rolloutActive =
+    readyReplicas < desiredReplicas ||
+    (pods.length > 0 && readyPods < pods.length) ||
+    clusterStatus.workload.status === 'degraded'
+  const watchingRecovery =
+    displayedResource?.kind === 'experiment' &&
+    (displayedResource.status === 'running' ||
+      displayedResource.status === 'pending' ||
+      displayedResource.status === 'recovered')
+
+  let title = 'Workload is steady'
+  let note = 'The locked deployment is ready for the next check.'
+
+  if (rolloutActive) {
+    title = 'Replacement is settling'
+    note = 'The workload is still moving back toward a steady state.'
+  } else if (displayedResource?.kind === 'experiment' && displayedResource.status === 'recovered') {
+    title = 'Recovery is complete'
+    note = 'The fault run has ended and the workload has settled again.'
+  } else if (watchingRecovery) {
+    title = 'Watching live recovery'
+    note = 'The workload is holding while the current fault run is active.'
+  }
+
+  return {
+    title,
+    note,
+    tone: rolloutActive ? 'warn' : 'good',
+    rows: [
+      {
+        label: 'Deployment',
+        value: `${readyReplicas} / ${desiredReplicas} ready`,
+      },
+      {
+        label: 'Workload pods',
+        value: pods.length > 0 ? `${readyPods} / ${pods.length} ready` : 'Waiting for pods',
+      },
+      {
+        label: 'Latest pod',
+        value: latestPod?.name ?? 'Waiting for a workload pod',
+      },
+      {
+        label: 'Restarts',
+        value:
+          restartingPods === 0
+            ? 'No recent restarts'
+            : `${restartingPods} pod${restartingPods === 1 ? '' : 's'} restarting`,
+      },
+    ],
+  }
+}
+
 function toneForStatus(status?: string) {
   if (status === 'healthy' || status === 'ready' || status === 'active' || status === 'running') {
     return 'good'
@@ -524,6 +631,7 @@ function App() {
   const canRunFaults = Boolean(displayedResource && canTargetFaults && chaosReady)
   const workloadLabel = clusterStatus?.workloadScope.deploymentName ?? 'the workload'
   const inspectorNotice = buildInspectorNotice(displayedResource, clusterStatus)
+  const rolloutWatch = buildRolloutWatch(resourceSnapshot, clusterStatus, displayedResource)
 
   const handleRunExperiment = useEffectEvent(async (type: ExperimentTypeName) => {
     if (!displayedResource || !canTargetFaults) {
@@ -832,6 +940,28 @@ function App() {
               Start one controlled fault at a time. The action rail stays focused on the selected workload.
             </p>
           </div>
+
+          {rolloutWatch ? (
+            <section className="rollout-watch">
+              <div className="detail-events__header">
+                <h3>Recovery watch</h3>
+                <p>{rolloutWatch.note}</p>
+              </div>
+              <strong
+                className={`rollout-watch__status rollout-watch__status--${rolloutWatch.tone}`}
+              >
+                {rolloutWatch.title}
+              </strong>
+              <dl className="rollout-watch__grid">
+                {rolloutWatch.rows.map((row) => (
+                  <div key={row.label}>
+                    <dt>{row.label}</dt>
+                    <dd>{row.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
 
           <div className="action-list">
             {experimentActions.map((action) => (
