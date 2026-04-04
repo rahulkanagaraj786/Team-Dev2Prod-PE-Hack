@@ -26,6 +26,8 @@ jobs:
     env:
       DO_NAMESPACE: dev2prod
       DO_REGISTRY: dev2prod
+      DOKS_CLUSTER_NAME: dev2prod
+      DATABASE_CLUSTER_NAME: dev2prod
       BACKEND_REPOSITORY: dev2prod-backend
       CLIENT_REPOSITORY: dev2prod-client
 
@@ -39,6 +41,53 @@ jobs:
         uses: digitalocean/action-doctl@v2
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Wait for cluster readiness
+        run: |
+          for attempt in $(seq 1 40); do
+            STATUS="$(doctl kubernetes cluster get "$DOKS_CLUSTER_NAME" --format Status --no-header | tr -d '[:space:]')"
+            if [ "$STATUS" = "running" ]; then
+              exit 0
+            fi
+            echo "Cluster status: ${STATUS:-unknown}. Waiting for running."
+            sleep 30
+          done
+          echo "Cluster did not become ready in time."
+          exit 1
+
+      - name: Resolve database cluster id
+        run: |
+          DATABASE_ID="$(
+            doctl databases list --output json | python3 -c '
+              import json
+              import os
+              import sys
+
+              target = os.environ["DATABASE_CLUSTER_NAME"]
+              for cluster in json.load(sys.stdin):
+                  if cluster.get("name") == target and cluster.get("engine") == "pg":
+                      print(cluster["id"])
+                      break
+            '
+          )"
+          if [ -z "$DATABASE_ID" ]; then
+            echo "Could not find the PostgreSQL database cluster."
+            exit 1
+          fi
+          echo "DATABASE_ID=$DATABASE_ID" >> "$GITHUB_ENV"
+
+      - name: Wait for database readiness
+        run: |
+          for attempt in $(seq 1 40); do
+            STATUS="$(doctl databases get "$DATABASE_ID" --format Status --no-header | tr -d '[:space:]')"
+            if [ "$STATUS" = "online" ]; then
+              exit 0
+            fi
+            echo "Database status: ${STATUS:-unknown}. Waiting for online."
+            sleep 30
+          done
+          echo "Database did not become ready in time."
+          exit 1
 
       - name: Prepare image names
         run: |
@@ -74,7 +123,7 @@ jobs:
         run: docker push "$CLIENT_IMAGE"
 
       - name: Save cluster credentials
-        run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 "${{ secrets.DOKS_CLUSTER_NAME }}"
+        run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 "$DOKS_CLUSTER_NAME"
 
       - name: Apply namespace
         run: kubectl apply -f infra/digitalocean/k8s/namespace.yaml
@@ -109,4 +158,6 @@ jobs:
           kubectl -n "$DO_NAMESPACE" rollout status deployment/client --timeout=180s
 
       - name: Show public service
-        run: kubectl -n "$DO_NAMESPACE" get service client -o wide
+        run: |
+          kubectl -n "$DO_NAMESPACE" get deployment,service,pod -o wide
+          kubectl -n "$DO_NAMESPACE" get service client -o wide
