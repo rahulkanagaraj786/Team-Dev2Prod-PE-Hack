@@ -7,6 +7,8 @@ import {
 } from 'react'
 
 import {
+  cancelExperiment,
+  createExperiment,
   fetchClusterStatus,
   fetchResourceDetail,
   fetchResourceEvents,
@@ -17,6 +19,7 @@ import {
 import type {
   ClusterEventRecord,
   ClusterStatus,
+  ExperimentTypeName,
   ResourceGroupName,
   ResourceKindName,
   ResourceRecord,
@@ -25,6 +28,37 @@ import type {
 
 type RequestState = 'loading' | 'ready' | 'error'
 type ConnectionState = 'connecting' | 'live' | 'offline'
+type FaultActionState = 'idle' | 'running' | 'error' | 'success'
+
+const experimentActions: Array<{
+  type: ExperimentTypeName
+  label: string
+  helper: string
+  durationSeconds: number
+  parameters: Record<string, unknown>
+}> = [
+  {
+    type: 'pod-kill',
+    label: 'Pod restart',
+    helper: 'Recycle one workload pod and watch the cluster recover.',
+    durationSeconds: 30,
+    parameters: {},
+  },
+  {
+    type: 'network-latency',
+    label: 'Network latency',
+    helper: 'Add a measured delay to workload traffic for one minute.',
+    durationSeconds: 60,
+    parameters: { latencyMs: 120 },
+  },
+  {
+    type: 'cpu-stress',
+    label: 'CPU pressure',
+    helper: 'Push CPU load on the workload without taking over the whole cluster.',
+    durationSeconds: 60,
+    parameters: { cpuLoad: 80 },
+  },
+]
 
 function ensureSelection(
   snapshot: ResourceSnapshot,
@@ -182,6 +216,9 @@ function App() {
   const [pageState, setPageState] = useState<RequestState>('loading')
   const [inspectorState, setInspectorState] = useState<RequestState>('ready')
   const [connectionState, setConnectionState] = useState<ConnectionState>('connecting')
+  const [faultActionState, setFaultActionState] = useState<FaultActionState>('idle')
+  const [faultActionMessage, setFaultActionMessage] = useState<string | null>(null)
+  const [activeFaultType, setActiveFaultType] = useState<ExperimentTypeName | null>(null)
 
   const deferredQuery = useDeferredValue(query)
 
@@ -203,6 +240,20 @@ function App() {
       })
     },
   )
+
+  const refreshSnapshot = useEffectEvent(async () => {
+    try {
+      const [statusResponse, resourceResponse] = await Promise.all([
+        fetchClusterStatus(),
+        fetchResourceSnapshot(),
+      ])
+      applySnapshot(statusResponse.data, resourceResponse.data)
+    } catch {
+      startTransition(() => {
+        setConnectionState('offline')
+      })
+    }
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -312,6 +363,86 @@ function App() {
     null
   const namespaceEvents = resourceSnapshot?.events.slice(0, 6) ?? []
   const activeExperiments = resourceSnapshot?.resources.experiments ?? []
+  const selectedResourceKind = String(displayedResource?.kind ?? '')
+  const canTargetFaults =
+    selectedResourceKind === 'deployment' ||
+    selectedResourceKind === 'service' ||
+    selectedResourceKind === 'pod'
+  const chaosReady = clusterStatus?.chaosMesh.status === 'ready'
+  const canRunFaults = Boolean(displayedResource && canTargetFaults && chaosReady)
+
+  const handleRunExperiment = useEffectEvent(async (type: ExperimentTypeName) => {
+    if (!displayedResource || !canTargetFaults) {
+      setFaultActionState('error')
+      setFaultActionMessage('Choose the workload deployment, service, or pod before starting a fault run.')
+      return
+    }
+
+    const action = experimentActions.find((item) => item.type === type)
+    if (!action) {
+      return
+    }
+
+    setFaultActionState('running')
+    setActiveFaultType(type)
+    setFaultActionMessage(`Starting ${action.label.toLowerCase()} on ${displayedResource.name}.`)
+
+    try {
+      const response = await createExperiment({
+        type,
+        target: {
+          kind: displayedResource.kind,
+          name: displayedResource.name,
+        },
+        durationSeconds: action.durationSeconds,
+        parameters: action.parameters,
+      })
+
+      await refreshSnapshot()
+      startTransition(() => {
+        setSelectedGroup('experiments')
+        setSelectedName(response.data.name)
+        setFaultActionState('success')
+        setFaultActionMessage(`${action.label} is now running.`)
+      })
+    } catch (error) {
+      startTransition(() => {
+        setFaultActionState('error')
+        setFaultActionMessage(
+          error instanceof Error ? error.message : 'The control plane could not start that fault run.',
+        )
+      })
+    } finally {
+      startTransition(() => {
+        setActiveFaultType(null)
+      })
+    }
+  })
+
+  const handleCancelExperiment = useEffectEvent(async () => {
+    if (!displayedResource || displayedResource.kind !== 'experiment') {
+      return
+    }
+
+    setFaultActionState('running')
+    setFaultActionMessage(`Stopping ${displayedResource.name}.`)
+
+    try {
+      await cancelExperiment(displayedResource.name)
+      await refreshSnapshot()
+      startTransition(() => {
+        setFaultActionState('success')
+        setFaultActionMessage('The selected fault run has been stopped.')
+      })
+    } catch (error) {
+      startTransition(() => {
+        setFaultActionState('error')
+        setFaultActionMessage(
+          error instanceof Error ? error.message : 'The control plane could not stop that fault run.',
+        )
+      })
+    }
+  })
 
   return (
     <div className="shell">
@@ -384,7 +515,7 @@ function App() {
           <p className="signal__meta">
             {clusterStatus?.chaosMesh.status === 'ready'
               ? `${activeExperiments.length} active experiment${activeExperiments.length === 1 ? '' : 's'}`
-              : 'Fault controls unlock after the experiment API is connected.'}
+              : 'Install and enable Chaos Mesh to unlock the fault controls.'}
           </p>
         </article>
       </section>
@@ -528,27 +659,61 @@ function App() {
             <p className="pane__eyebrow">Fault controls</p>
             <h2>Operator actions</h2>
             <p className="pane__copy">
-              The layout is ready for the first three reliability experiments. The controls stay restrained until the API lands.
+              Start one controlled fault at a time. The action rail stays focused on the selected workload.
             </p>
           </div>
 
           <div className="action-list">
-            {['Pod restart', 'Network latency', 'CPU pressure'].map((label) => (
+            {experimentActions.map((action) => (
               <button
-                key={label}
+                key={action.type}
                 type="button"
                 className="action-list__button"
-                disabled
+                disabled={!canRunFaults || faultActionState === 'running'}
+                onClick={() => {
+                  void handleRunExperiment(action.type)
+                }}
               >
-                <span>{label}</span>
+                <span>{action.label}</span>
                 <small>
-                  {clusterStatus?.chaosMesh.status === 'ready'
-                    ? 'Ready for the next branch'
-                    : 'Waiting for fault tooling'}
+                  {!chaosReady
+                    ? 'Waiting for fault tooling'
+                    : !canTargetFaults
+                      ? 'Select a workload resource first'
+                      : activeFaultType === action.type && faultActionState === 'running'
+                        ? 'Starting now'
+                        : action.helper}
                 </small>
               </button>
             ))}
           </div>
+
+          {displayedResource?.kind === 'experiment' ? (
+            <button
+              type="button"
+              className="action-list__secondary"
+              disabled={faultActionState === 'running'}
+              onClick={() => {
+                void handleCancelExperiment()
+              }}
+            >
+              Stop selected experiment
+            </button>
+          ) : null}
+
+          {faultActionMessage ? (
+            <div
+              className={
+                faultActionState === 'error'
+                  ? 'message message--error'
+                  : faultActionState === 'success'
+                    ? 'message message--success'
+                    : 'message'
+              }
+            >
+              {faultActionMessage}
+            </div>
+          ) : null}
 
           <section className="detail-events detail-events--compact">
             <div className="detail-events__header">

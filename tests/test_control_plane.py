@@ -217,6 +217,119 @@ def test_resource_logs_return_payload(monkeypatch):
     }
 
 
+def test_list_experiments_returns_payload(monkeypatch):
+    monkeypatch.setenv("CHAOS_MESH_ENABLED", "true")
+    app = create_app()
+
+    monkeypatch.setattr(
+        control_plane,
+        "list_experiments",
+        lambda config: [
+            {
+                "name": "pod-kill-run",
+                "type": "pod-kill",
+                "status": "running",
+                "target": "workload-api",
+            }
+        ],
+    )
+
+    with app.test_client() as client:
+        response = client.get("/api/experiments")
+
+    assert response.status_code == 200
+    assert response.get_json()["data"] == [
+        {
+            "name": "pod-kill-run",
+            "type": "pod-kill",
+            "status": "running",
+            "target": "workload-api",
+        }
+    ]
+
+
+def test_create_experiment_returns_created_payload(monkeypatch):
+    monkeypatch.setenv("CHAOS_MESH_ENABLED", "true")
+    app = create_app()
+
+    def fake_create_experiment(config, payload):
+        assert payload == {
+            "type": "pod-kill",
+            "target": {"kind": "deployment", "name": "workload-api"},
+            "durationSeconds": 30,
+            "parameters": {},
+        }
+        return {
+            "name": "pod-kill-run",
+            "type": "pod-kill",
+            "status": "running",
+            "target": "workload-api",
+        }
+
+    monkeypatch.setattr(control_plane, "create_experiment", fake_create_experiment)
+
+    with app.test_client() as client:
+        response = client.post(
+            "/api/experiments",
+            json={
+                "type": "pod-kill",
+                "target": {"kind": "deployment", "name": "workload-api"},
+                "durationSeconds": 30,
+                "parameters": {},
+            },
+        )
+
+    assert response.status_code == 201
+    assert response.get_json()["data"]["name"] == "pod-kill-run"
+
+
+def test_create_experiment_returns_validation_error(monkeypatch):
+    app = create_app()
+
+    def fake_create_experiment(config, payload):
+        raise control_plane.ExperimentRequestError(
+            "Fault tooling is not ready in this cluster yet.",
+            code="chaos_mesh_unavailable",
+            status_code=409,
+        )
+
+    monkeypatch.setattr(control_plane, "create_experiment", fake_create_experiment)
+
+    with app.test_client() as client:
+        response = client.post("/api/experiments", json={"type": "pod-kill"})
+
+    assert response.status_code == 409
+    assert response.get_json()["error"] == {
+        "code": "chaos_mesh_unavailable",
+        "message": "Fault tooling is not ready in this cluster yet.",
+    }
+
+
+def test_cancel_experiment_returns_payload(monkeypatch):
+    monkeypatch.setenv("CHAOS_MESH_ENABLED", "true")
+    app = create_app()
+
+    def fake_cancel_experiment(config, name):
+        assert name == "pod-kill-run"
+        return {
+            "name": "pod-kill-run",
+            "type": "pod-kill",
+            "status": "cancelled",
+        }
+
+    monkeypatch.setattr(control_plane, "cancel_experiment", fake_cancel_experiment)
+
+    with app.test_client() as client:
+        response = client.post("/api/experiments/pod-kill-run/cancel")
+
+    assert response.status_code == 200
+    assert response.get_json()["data"] == {
+        "name": "pod-kill-run",
+        "type": "pod-kill",
+        "status": "cancelled",
+    }
+
+
 def test_stream_returns_cluster_snapshot(monkeypatch):
     app = create_app()
 

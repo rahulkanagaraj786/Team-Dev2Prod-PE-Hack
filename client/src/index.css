@@ -433,10 +433,25 @@ button:disabled {
   display: grid;
   gap: 0.25rem;
   background: var(--paper);
+  border: 1px solid var(--line);
+  transition: border-color 180ms ease, background-color 180ms ease;
+}
+
+.action-list__button:not(:disabled):hover {
+  border-color: var(--line-strong);
+  background: var(--paper-strong);
 }
 
 .action-list__button span {
   font-weight: 600;
+}
+
+.action-list__secondary {
+  margin: 0 1.5rem 1.5rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  background: var(--paper-strong);
+  text-align: left;
 }
 
 .message {
@@ -444,6 +459,11 @@ button:disabled {
   padding: 1rem;
   border: 1px solid var(--line);
   background: var(--paper);
+}
+
+.message--success {
+  border-color: rgba(31, 107, 74, 0.35);
+  color: var(--good);
 }
 
 .message--error {

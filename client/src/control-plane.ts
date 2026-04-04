@@ -2,6 +2,7 @@ import type {
   ClusterEventRecord,
   ClusterSnapshotEvent,
   ClusterStatus,
+  ExperimentRequestPayload,
   ResourceGroupName,
   ResourceKindName,
   ResourceRecord,
@@ -33,6 +34,24 @@ async function fetchJson<T>(path: string): Promise<T> {
   return (await response.json()) as T
 }
 
+async function sendJson<T>(path: string, method: 'POST', body?: object): Promise<T> {
+  const response = await fetch(buildUrl(path), {
+    method,
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+
+  const payload = (await response.json()) as T & { error?: { message?: string } }
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? `Request failed with ${response.status}`)
+  }
+
+  return payload
+}
+
 export function fetchClusterStatus() {
   return fetchJson<ApiEnvelope<ClusterStatus>>('/api/cluster/status')
 }
@@ -49,6 +68,14 @@ export function fetchResourceEvents(kind: ResourceKindName, name: string) {
   return fetchJson<ApiEnvelope<ClusterEventRecord[]>>(
     `/api/resources/${kind}/${name}/events`,
   )
+}
+
+export function createExperiment(payload: ExperimentRequestPayload) {
+  return sendJson<ApiEnvelope<ResourceRecord>>('/api/experiments', 'POST', payload)
+}
+
+export function cancelExperiment(name: string) {
+  return sendJson<ApiEnvelope<ResourceRecord>>(`/api/experiments/${name}/cancel`, 'POST')
 }
 
 export function openClusterStream(
