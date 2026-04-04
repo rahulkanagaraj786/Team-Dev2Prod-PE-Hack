@@ -6,7 +6,7 @@ from peewee import DoesNotExist
 from peewee import IntegrityError
 
 from app.errors import error_response
-from app.models import Link
+from app.models import Link, User
 from app.services import record_event
 
 links_bp = Blueprint("links", __name__)
@@ -41,6 +41,14 @@ def validate_user_id(user_id):
     return None
 
 
+def validate_user_reference(user_id):
+    if user_id is None:
+        return None
+    if User.select().where(User.id == user_id).exists():
+        return None
+    return "Choose an existing user."
+
+
 def validate_title(title):
     if title is not None and (not isinstance(title, str) or not title.strip()):
         return "Title must be plain text."
@@ -62,6 +70,9 @@ def validate_payload(payload):
     user_id_error = validate_user_id(payload.get("userId"))
     if user_id_error:
         return user_id_error
+    user_reference_error = validate_user_reference(payload.get("userId"))
+    if user_reference_error:
+        return user_reference_error
 
     title_error = validate_title(payload.get("title"))
     if title_error:
@@ -149,6 +160,9 @@ def update_link(slug):
         user_id_error = validate_user_id(payload.get("userId"))
         if user_id_error:
             return error_response("validation_failed", user_id_error, 422)
+        user_reference_error = validate_user_reference(payload.get("userId"))
+        if user_reference_error:
+            return error_response("validation_failed", user_reference_error, 422)
         link.user_id = payload["userId"]
 
     if "title" in payload:

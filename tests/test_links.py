@@ -1,4 +1,18 @@
+from app.models import User
+
+
+def create_user(user_id, username=None):
+    username = username or f"user-{user_id}"
+    return User.create(
+        id=user_id,
+        username=username,
+        email=f"{username}@dev2prod.test",
+    )
+
+
 def test_create_link(client):
+    create_user(14)
+
     response = client.post(
         "/api/links",
         json={
@@ -32,6 +46,8 @@ def test_list_links_returns_created_items(client):
 
 
 def test_get_link_returns_one_item(client):
+    create_user(8)
+
     client.post(
         "/api/links",
         json={
@@ -97,6 +113,8 @@ def test_resolve_link_returns_not_found_for_missing_slug(client):
 
 
 def test_update_link_changes_editable_fields(client):
+    create_user(5)
+
     client.post(
         "/api/links",
         json={
@@ -222,3 +240,39 @@ def test_create_link_rejects_invalid_user_id(client):
     error = response.get_json()["error"]
     assert error["code"] == "validation_failed"
     assert error["message"] == "User ID must be a positive number."
+
+
+def test_create_link_rejects_missing_user(client):
+    response = client.post(
+        "/api/links",
+        json={
+            "slug": "unknown-user",
+            "userId": 88,
+            "targetUrl": "https://dev2prod.app/unknown-user",
+        },
+    )
+
+    assert response.status_code == 422
+    error = response.get_json()["error"]
+    assert error["code"] == "validation_failed"
+    assert error["message"] == "Choose an existing user."
+
+
+def test_update_link_rejects_missing_user(client):
+    client.post(
+        "/api/links",
+        json={
+            "slug": "missing-user-update",
+            "targetUrl": "https://dev2prod.app/missing-user-update",
+        },
+    )
+
+    response = client.patch(
+        "/api/links/missing-user-update",
+        json={"userId": 77},
+    )
+
+    assert response.status_code == 422
+    error = response.get_json()["error"]
+    assert error["code"] == "validation_failed"
+    assert error["message"] == "Choose an existing user."

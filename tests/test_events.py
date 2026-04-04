@@ -1,9 +1,19 @@
 import json
 
-from app.models import Event, Link
+from app.models import Event, Link, User
+
+
+def create_user(user_id):
+    return User.create(
+        id=user_id,
+        username=f"user-{user_id}",
+        email=f"user-{user_id}@dev2prod.test",
+    )
 
 
 def test_create_link_records_created_event(client):
+    create_user(4)
+
     client.post(
         "/api/links",
         json={
