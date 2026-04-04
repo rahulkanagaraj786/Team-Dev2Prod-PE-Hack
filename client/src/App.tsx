@@ -1,120 +1,578 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import {
+  startTransition,
+  useDeferredValue,
+  useEffect,
+  useEffectEvent,
+  useState,
+} from 'react'
+
+import {
+  fetchClusterStatus,
+  fetchResourceDetail,
+  fetchResourceEvents,
+  fetchResourceSnapshot,
+  openClusterStream,
+  resourceGroupMeta,
+} from './control-plane'
+import type {
+  ClusterEventRecord,
+  ClusterStatus,
+  ResourceGroupName,
+  ResourceKindName,
+  ResourceRecord,
+  ResourceSnapshot,
+} from './types'
+
+type RequestState = 'loading' | 'ready' | 'error'
+type ConnectionState = 'connecting' | 'live' | 'offline'
+
+function ensureSelection(
+  snapshot: ResourceSnapshot,
+  preferredGroup: ResourceGroupName,
+  preferredName: string | null,
+) {
+  const currentGroupItems = snapshot.resources[preferredGroup]
+  if (preferredName && currentGroupItems.some((item) => item.name === preferredName)) {
+    return { group: preferredGroup, name: preferredName }
+  }
+
+  if (currentGroupItems.length > 0) {
+    return { group: preferredGroup, name: currentGroupItems[0].name }
+  }
+
+  for (const { group } of resourceGroupMeta) {
+    const items = snapshot.resources[group]
+    if (items.length > 0) {
+      return { group, name: items[0].name }
+    }
+  }
+
+  return { group: preferredGroup, name: null }
+}
+
+function formatStatusText(status: string) {
+  return status.replace(/([A-Z])/g, ' $1').replace(/^./, (value) => value.toUpperCase())
+}
+
+function formatUpdatedAt(value: unknown) {
+  if (typeof value !== 'string' || !value) {
+    return 'Waiting for the first cluster update'
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return 'Waiting for the first cluster update'
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date)
+}
+
+function buildResourceRows(resource: ResourceRecord | null) {
+  if (!resource) {
+    return []
+  }
+
+  const rows: Array<{ label: string; value: string }> = []
+  const kind = String(resource.kind)
+
+  if (kind === 'deployment' || kind === 'replicaSet') {
+    rows.push({
+      label: 'Readiness',
+      value: `${resource.readyReplicas ?? 0} / ${resource.desiredReplicas ?? 0} ready`,
+    })
+  }
+
+  if (kind === 'pod') {
+    rows.push({
+      label: 'Ready',
+      value: resource.ready ? 'Yes' : 'No',
+    })
+    rows.push({
+      label: 'Restarts',
+      value: String(resource.restartCount ?? 0),
+    })
+  }
+
+  if (kind === 'service') {
+    rows.push({
+      label: 'Type',
+      value: String(resource.type ?? 'ClusterIP'),
+    })
+    rows.push({
+      label: 'Cluster IP',
+      value: String(resource.clusterIp ?? 'Not assigned'),
+    })
+    rows.push({
+      label: 'Ports',
+      value: Array.isArray(resource.ports)
+        ? resource.ports.join(', ')
+        : 'No ports published',
+    })
+  }
+
+  if (kind === 'experiment') {
+    rows.push({
+      label: 'Fault',
+      value: String(resource.type ?? 'Unknown'),
+    })
+    rows.push({
+      label: 'Target',
+      value: String(resource.target ?? 'Waiting for target'),
+    })
+  }
+
+  rows.push({
+    label: 'Status',
+    value: formatStatusText(String(resource.status ?? 'unknown')),
+  })
+  rows.push({
+    label: 'Last change',
+    value: formatUpdatedAt(resource.updatedAt),
+  })
+
+  return rows
+}
+
+function summarizeResource(resource: ResourceRecord) {
+  switch (resource.kind) {
+    case 'deployment':
+    case 'replicaSet':
+      return `${resource.readyReplicas ?? 0} of ${resource.desiredReplicas ?? 0} ready`
+    case 'pod':
+      return `${resource.ready ? 'Ready' : 'Not ready'} • ${resource.restartCount ?? 0} restarts`
+    case 'service':
+      return `${resource.type ?? 'ClusterIP'} • ${
+        Array.isArray(resource.ports) ? resource.ports.join(', ') : 'No ports'
+      }`
+    case 'experiment':
+      return `${formatStatusText(String(resource.status ?? 'unknown'))} • ${
+        resource.type ?? 'Fault run'
+      }`
+    default:
+      return formatStatusText(String(resource.status ?? 'unknown'))
+  }
+}
+
+function toneForStatus(status?: string) {
+  if (status === 'healthy' || status === 'ready' || status === 'active' || status === 'running') {
+    return 'good'
+  }
+  if (status === 'degraded' || status === 'pending') {
+    return 'warn'
+  }
+  if (status === 'unreachable' || status === 'failed' || status === 'unknown') {
+    return 'bad'
+  }
+  return 'quiet'
+}
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [clusterStatus, setClusterStatus] = useState<ClusterStatus | null>(null)
+  const [resourceSnapshot, setResourceSnapshot] = useState<ResourceSnapshot | null>(null)
+  const [selectedGroup, setSelectedGroup] = useState<ResourceGroupName>('deployments')
+  const [selectedName, setSelectedName] = useState<string | null>(null)
+  const [resourceDetail, setResourceDetail] = useState<ResourceRecord | null>(null)
+  const [resourceEvents, setResourceEvents] = useState<ClusterEventRecord[]>([])
+  const [query, setQuery] = useState('')
+  const [pageState, setPageState] = useState<RequestState>('loading')
+  const [inspectorState, setInspectorState] = useState<RequestState>('ready')
+  const [connectionState, setConnectionState] = useState<ConnectionState>('connecting')
+
+  const deferredQuery = useDeferredValue(query)
+
+  const applySnapshot = useEffectEvent(
+    (nextStatus: ClusterStatus, nextResources: ResourceSnapshot) => {
+      const nextSelection = ensureSelection(
+        nextResources,
+        selectedGroup,
+        selectedName,
+      )
+
+      startTransition(() => {
+        setClusterStatus(nextStatus)
+        setResourceSnapshot(nextResources)
+        setSelectedGroup(nextSelection.group)
+        setSelectedName(nextSelection.name)
+        setPageState('ready')
+        setConnectionState('live')
+      })
+    },
+  )
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadInitialState() {
+      try {
+        const [statusResponse, resourceResponse] = await Promise.all([
+          fetchClusterStatus(),
+          fetchResourceSnapshot(),
+        ])
+        if (!cancelled) {
+          applySnapshot(statusResponse.data, resourceResponse.data)
+        }
+      } catch {
+        if (!cancelled) {
+          startTransition(() => {
+            setPageState('error')
+            setConnectionState('offline')
+          })
+        }
+      }
+    }
+
+    loadInitialState()
+
+    const stream = openClusterStream(
+      (snapshot) => {
+        if (!cancelled) {
+          applySnapshot(snapshot.status, snapshot.resources)
+        }
+      },
+      () => {
+        if (!cancelled) {
+          startTransition(() => {
+            setConnectionState('offline')
+          })
+        }
+      },
+    )
+
+    return () => {
+      cancelled = true
+      stream.close()
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const currentName = selectedName
+
+    if (!currentName) {
+      return () => {
+        cancelled = true
+      }
+    }
+
+    const resourceName = currentName
+
+    async function loadInspector() {
+      const kind = resourceGroupMeta.find(
+        ({ group }) => group === selectedGroup,
+      )?.kind as ResourceKindName
+
+      setInspectorState('loading')
+
+      try {
+        const [detailResponse, eventsResponse] = await Promise.all([
+          fetchResourceDetail(kind, resourceName),
+          fetchResourceEvents(kind, resourceName),
+        ])
+
+        if (!cancelled) {
+          startTransition(() => {
+            setResourceDetail(detailResponse.data)
+            setResourceEvents(eventsResponse.data)
+            setInspectorState('ready')
+          })
+        }
+      } catch {
+        if (!cancelled) {
+          startTransition(() => {
+            setInspectorState('error')
+          })
+        }
+      }
+    }
+
+    loadInspector()
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedGroup, selectedName])
+
+  const selectedSection = resourceGroupMeta.find(
+    ({ group }) => group === selectedGroup,
+  ) ?? resourceGroupMeta[0]
+  const currentResources = resourceSnapshot?.resources[selectedGroup] ?? []
+  const visibleResources = deferredQuery
+    ? currentResources.filter((item) =>
+        item.name.toLowerCase().includes(deferredQuery.trim().toLowerCase()),
+      )
+    : currentResources
+  const displayedResource =
+    resourceDetail ??
+    currentResources.find((item) => item.name === selectedName) ??
+    null
+  const namespaceEvents = resourceSnapshot?.events.slice(0, 6) ?? []
+  const activeExperiments = resourceSnapshot?.resources.experiments ?? []
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
+    <div className="shell">
+      <header className="masthead">
+        <div className="masthead__identity">
+          <p className="eyebrow">Dev2Prod</p>
+          <h1>Reliability cockpit</h1>
+          <p className="masthead__intro">
+            One workload, one namespace, and a clear picture of what the cluster is doing right now.
           </p>
         </div>
-        <button
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
+
+        <div className="masthead__scope">
+          <div className={`presence presence--${connectionState}`}>
+            <span className="presence__dot" />
+            <span>
+              {connectionState === 'live'
+                ? 'Live updates'
+                : connectionState === 'connecting'
+                  ? 'Connecting'
+                  : 'Offline'}
+            </span>
+          </div>
+          <dl>
+            <div>
+              <dt>Cluster</dt>
+              <dd>{clusterStatus?.clusterName ?? 'Waiting for cluster'}</dd>
+            </div>
+            <div>
+              <dt>Namespace</dt>
+              <dd>{clusterStatus?.namespace ?? 'Waiting for namespace'}</dd>
+            </div>
+            <div>
+              <dt>Provider</dt>
+              <dd>{clusterStatus?.provider ?? 'Waiting for provider'}</dd>
+            </div>
+          </dl>
+        </div>
+      </header>
+
+      <section className="overview">
+        <article className="signal">
+          <p className="signal__label">Service</p>
+          <strong className={`signal__value signal__value--${toneForStatus(clusterStatus?.workload.status)}`}>
+            {clusterStatus ? formatStatusText(clusterStatus.workload.status) : 'Loading'}
+          </strong>
+          <p className="signal__meta">
+            {clusterStatus?.workload.message ??
+              'The workload health check drives the top-line service signal.'}
+          </p>
+        </article>
+
+        <article className="signal">
+          <p className="signal__label">Control plane</p>
+          <strong className={`signal__value signal__value--${toneForStatus(clusterStatus?.controlPlane.status)}`}>
+            {clusterStatus ? formatStatusText(clusterStatus.controlPlane.status) : 'Loading'}
+          </strong>
+          <p className="signal__meta">
+            {clusterStatus
+              ? `${clusterStatus.mode} mode • scope locked to ${clusterStatus.namespace}`
+              : 'Waiting for control-plane status'}
+          </p>
+        </article>
+
+        <article className="signal">
+          <p className="signal__label">Fault tools</p>
+          <strong className={`signal__value signal__value--${toneForStatus(clusterStatus?.chaosMesh.status)}`}>
+            {clusterStatus ? formatStatusText(clusterStatus.chaosMesh.status) : 'Loading'}
+          </strong>
+          <p className="signal__meta">
+            {clusterStatus?.chaosMesh.status === 'ready'
+              ? `${activeExperiments.length} active experiment${activeExperiments.length === 1 ? '' : 's'}`
+              : 'Fault controls unlock after the experiment API is connected.'}
+          </p>
+        </article>
       </section>
 
-      <div className="ticks"></div>
+      <main className="workspace">
+        <aside className="pane pane--navigation">
+          <div className="pane__header">
+            <p className="pane__eyebrow">Resources</p>
+            <h2>Explore the namespace</h2>
+            <p className="pane__copy">
+              Start with one resource at a time. The detail view stays focused on the selection.
+            </p>
+          </div>
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+          <div className="tabs" role="tablist" aria-label="Resource groups">
+            {resourceGroupMeta.map((section) => (
+              <button
+                key={section.group}
+                type="button"
+                className={section.group === selectedGroup ? 'tab tab--active' : 'tab'}
+                onClick={() => {
+                  startTransition(() => {
+                    setSelectedGroup(section.group)
+                  })
+                }}
+              >
+                <span>{section.label}</span>
+                <span className="tab__count">
+                  {resourceSnapshot?.resources[section.group].length ?? 0}
+                </span>
+              </button>
+            ))}
+          </div>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+          <label className="search">
+            <span className="search__label">Filter</span>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={`Find a ${selectedSection.label.toLowerCase()}`}
+            />
+          </label>
+
+          <div className="resource-list" role="list">
+            {visibleResources.length === 0 ? (
+              <p className="empty-state">{selectedSection.emptyLabel}</p>
+            ) : (
+              visibleResources.map((resource) => (
+                <button
+                  key={resource.name}
+                  type="button"
+                  className={
+                    resource.name === selectedName
+                      ? 'resource-list__item resource-list__item--active'
+                      : 'resource-list__item'
+                  }
+                  onClick={() => {
+                    startTransition(() => {
+                      setSelectedName(resource.name)
+                    })
+                  }}
+                >
+                  <div>
+                    <strong>{resource.name}</strong>
+                    <p>{summarizeResource(resource)}</p>
+                  </div>
+                  <span
+                    className={`resource-list__status resource-list__status--${toneForStatus(
+                      String(resource.status ?? 'unknown'),
+                    )}`}
+                  >
+                    {formatStatusText(String(resource.status ?? 'unknown'))}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </aside>
+
+        <section className="pane pane--detail">
+          <div className="pane__header">
+            <p className="pane__eyebrow">Selected resource</p>
+            <h2>{displayedResource?.name ?? 'Choose a resource'}</h2>
+            <p className="pane__copy">
+              {displayedResource
+                ? summarizeResource(displayedResource)
+                : 'Pick a deployment, pod, service, or experiment to inspect it.'}
+            </p>
+          </div>
+
+          {pageState === 'error' ? (
+            <div className="message message--error">
+              The client could not reach the control plane. Start the workload and control-plane services, then refresh.
+            </div>
+          ) : displayedResource ? (
+            <>
+              <dl className="detail-grid">
+                {buildResourceRows(displayedResource).map((row) => (
+                  <div key={row.label}>
+                    <dt>{row.label}</dt>
+                    <dd>{row.value}</dd>
+                  </div>
+                ))}
+              </dl>
+
+              <section className="detail-events">
+                <div className="detail-events__header">
+                  <h3>Evidence</h3>
+                  <p>
+                    {inspectorState === 'loading'
+                      ? 'Refreshing recent events.'
+                      : 'Recent events attached to the selected resource.'}
+                  </p>
+                </div>
+
+                {resourceEvents.length === 0 ? (
+                  <p className="empty-state">No recent events for this resource.</p>
+                ) : (
+                  <ul className="event-list">
+                    {resourceEvents.slice(0, 5).map((event, index) => (
+                      <li key={`${event.name ?? event.reason ?? 'event'}-${index}`}>
+                        <strong>{event.reason ?? event.type ?? 'Status update'}</strong>
+                        <p>{event.message ?? 'The cluster reported a state change without extra notes.'}</p>
+                        <span>{formatUpdatedAt(event.timestamp)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            </>
+          ) : (
+            <p className="empty-state">
+              The namespace is reachable, but there is nothing to inspect yet.
+            </p>
+          )}
+        </section>
+
+        <aside className="pane pane--support">
+          <div className="pane__header">
+            <p className="pane__eyebrow">Fault controls</p>
+            <h2>Operator actions</h2>
+            <p className="pane__copy">
+              The layout is ready for the first three reliability experiments. The controls stay restrained until the API lands.
+            </p>
+          </div>
+
+          <div className="action-list">
+            {['Pod restart', 'Network latency', 'CPU pressure'].map((label) => (
+              <button
+                key={label}
+                type="button"
+                className="action-list__button"
+                disabled
+              >
+                <span>{label}</span>
+                <small>
+                  {clusterStatus?.chaosMesh.status === 'ready'
+                    ? 'Ready for the next branch'
+                    : 'Waiting for fault tooling'}
+                </small>
+              </button>
+            ))}
+          </div>
+
+          <section className="detail-events detail-events--compact">
+            <div className="detail-events__header">
+              <h3>Namespace activity</h3>
+              <p>The latest cluster signals across the locked scope.</p>
+            </div>
+
+            {namespaceEvents.length === 0 ? (
+              <p className="empty-state">No namespace events yet.</p>
+            ) : (
+              <ul className="event-list event-list--compact">
+                {namespaceEvents.map((event, index) => (
+                  <li key={`${event.name ?? event.reason ?? 'namespace-event'}-${index}`}>
+                    <strong>{event.resourceName ?? 'Cluster event'}</strong>
+                    <p>{event.reason ?? 'Update'}</p>
+                    <span>{formatUpdatedAt(event.timestamp)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </aside>
+      </main>
+    </div>
   )
 }
 
