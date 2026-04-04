@@ -33,3 +33,10 @@ def init_db(app):
     def _db_close(exc):
         if not db.is_closed():
             db.close()
+
+
+def create_tables():
+    from app.models import Link
+
+    db.connect(reuse_if_open=True)
+    db.create_tables([Link], safe=True)
