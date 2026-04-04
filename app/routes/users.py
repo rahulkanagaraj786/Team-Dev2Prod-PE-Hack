@@ -5,7 +5,7 @@ from flask import Blueprint, jsonify, request
 from peewee import DoesNotExist, IntegrityError
 
 from app.errors import error_response
-from app.models import User
+from app.models import Event, Link, User
 from app.services import import_users_csv
 
 users_bp = Blueprint("users", __name__)
@@ -39,6 +39,10 @@ def validate_email(email):
     if "@" not in candidate or "." not in candidate.split("@")[-1]:
         return "Email must be valid."
     return None
+
+
+def get_existing_user_by_email(email):
+    return User.select().where(User.email == email).first()
 
 
 def get_user_or_none(user_id):
@@ -102,10 +106,18 @@ def create_user():
     if email_error:
         return error_response("validation_failed", email_error, 422)
 
+    normalized_username = payload["username"].strip()
+    normalized_email = payload["email"].strip().lower()
+    existing_user = get_existing_user_by_email(normalized_email)
+    if existing_user is not None:
+        if existing_user.username == normalized_username:
+            return jsonify(serialize_user(existing_user)), 201
+        return error_response("conflict", "That email is already in use.", 409)
+
     try:
         user = User.create(
-            username=payload["username"].strip(),
-            email=payload["email"].strip().lower(),
+            username=normalized_username,
+            email=normalized_email,
         )
     except IntegrityError:
         return error_response("conflict", "That email is already in use.", 409)
@@ -154,6 +166,19 @@ def update_user(user_id):
         return error_response("conflict", "That email is already in use.", 409)
 
     return jsonify(serialize_user(user))
+
+
+@users_bp.delete("/users/<int:user_id>")
+def delete_user(user_id):
+    user = get_user_or_none(user_id)
+    if user is None:
+        return error_response("not_found", "We could not find that user.", 404)
+
+    Link.update(user_id=None).where(Link.user_id == user.id).execute()
+    Event.update(user_id=None).where(Event.user_id == user.id).execute()
+    user.delete_instance()
+
+    return ("", 204)
 
 
 @users_bp.post("/users/bulk")

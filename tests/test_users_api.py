@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from io import BytesIO
 
-from app.models import User
+from app.models import Event, Link, User
 
 
 def create_user(user_id, username, email, created_at=None):
@@ -93,6 +93,24 @@ def test_create_user(client):
     assert "created_at" in payload
 
 
+def test_create_user_returns_existing_user_for_exact_duplicate(client):
+    create_user(1, "testuser_create", "testuser_create@example.com")
+
+    response = client.post(
+        "/users",
+        json={
+            "username": "testuser_create",
+            "email": "testuser_create@example.com",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.get_json()
+    assert payload["id"] == 1
+    assert payload["username"] == "testuser_create"
+    assert payload["email"] == "testuser_create@example.com"
+
+
 def test_create_user_rejects_invalid_schema(client):
     response = client.post(
         "/users",
@@ -127,6 +145,23 @@ def test_update_user(client):
     assert payload["id"] == 1
     assert payload["username"] == "updated_username"
     assert payload["email"] == "silvertrail15@hackstack.io"
+
+
+def test_delete_user(client):
+    user = create_user(200, "delete-me", "delete-me@example.com")
+    link = Link.create(
+        slug="delete-user-link",
+        user_id=user.id,
+        target_url="https://example.com/delete-user",
+    )
+    Event.create(link=link, user_id=user.id, event_type="created")
+
+    response = client.delete("/users/200")
+
+    assert response.status_code == 204
+    assert User.select().where(User.id == 200).count() == 0
+    assert Link.get_by_id(link.id).user_id is None
+    assert Event.get(Event.link == link).user_id is None
 
 
 def test_list_users_supports_pagination(client):

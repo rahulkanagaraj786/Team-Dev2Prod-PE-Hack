@@ -63,6 +63,18 @@ def validate_title(title):
     return None
 
 
+def parse_bool_query(value):
+    if value is None:
+        return None
+
+    normalized = value.strip().lower()
+    if normalized in {"true", "1", "yes"}:
+        return True
+    if normalized in {"false", "0", "no"}:
+        return False
+    raise ValueError("is_active must be true or false.")
+
+
 def get_url_or_none(url_id):
     try:
         return Link.get_by_id(url_id)
@@ -85,6 +97,13 @@ def list_urls():
     user_id = request.args.get("user_id", type=int)
     if user_id is not None:
         urls = urls.where(Link.user_id == user_id)
+
+    is_active = request.args.get("is_active")
+    if is_active is not None:
+        try:
+            urls = urls.where(Link.is_active == parse_bool_query(is_active))
+        except ValueError as error:
+            return error_response("validation_failed", str(error), 422)
 
     return jsonify([serialize_url(link) for link in urls])
 
@@ -228,3 +247,13 @@ def update_url(url_id):
     )
 
     return jsonify(serialize_url(link))
+
+
+@urls_bp.delete("/urls/<int:url_id>")
+def delete_url(url_id):
+    link = get_url_or_none(url_id)
+    if link is None:
+        return error_response("not_found", "We could not find that URL.", 404)
+
+    link.delete_instance(recursive=True, delete_nullable=True)
+    return ("", 204)
