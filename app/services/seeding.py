@@ -39,6 +39,7 @@ def parse_bool(value: str) -> bool:
 
 def normalize_url_row(row: dict) -> dict:
     return {
+        "source_id": int(row["id"]),
         "slug": row["short_code"].strip().lower(),
         "user_id": int(row["user_id"]),
         "target_url": row["original_url"].strip(),
@@ -82,11 +83,16 @@ def import_urls_csv(path: str | Path) -> dict:
 
             for row in reader:
                 payload = normalize_url_row(row)
-                link, was_created = Link.get_or_create(
-                    slug=payload["slug"],
-                    defaults=payload,
+                link = (
+                    Link.select()
+                    .where(
+                        (Link.source_id == payload["source_id"])
+                        | (Link.slug == payload["slug"])
+                    )
+                    .first()
                 )
-                if was_created:
+                if link is None:
+                    Link.create(**payload)
                     created += 1
                     continue
 

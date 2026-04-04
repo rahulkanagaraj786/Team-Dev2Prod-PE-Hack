@@ -133,6 +133,7 @@ def test_import_urls_csv_creates_links(app, tmp_path):
 
     assert summary == {"created": 1, "updated": 0, "total": 1}
     link = Link.get(Link.slug == "rp4z9h")
+    assert link.source_id == 1
     assert link.user_id == 9
     assert link.title == "Status board journey"
     assert link.is_active is True
@@ -140,6 +141,7 @@ def test_import_urls_csv_creates_links(app, tmp_path):
 
 def test_import_urls_csv_updates_existing_links(app, tmp_path):
     Link.create(
+        source_id=10,
         slug="ops123",
         user_id=1,
         target_url="https://old.dev/item",
@@ -171,3 +173,38 @@ def test_import_urls_csv_updates_existing_links(app, tmp_path):
     assert link.target_url == "https://seeded.app/new/item"
     assert link.title == "Fresh title"
     assert link.is_active is False
+
+
+def test_import_urls_csv_updates_links_by_source_id(app, tmp_path):
+    Link.create(
+        source_id=42,
+        slug="older-slug",
+        user_id=3,
+        target_url="https://old.dev/item",
+        title="Old title",
+    )
+
+    csv_path = tmp_path / "urls.csv"
+    write_urls_csv(
+        csv_path,
+        [
+            {
+                "id": "42",
+                "user_id": "7",
+                "short_code": "new-slug",
+                "original_url": "https://seeded.app/new/item",
+                "title": "Fresh title",
+                "is_active": "True",
+                "created_at": "2025-11-02 14:13:50",
+                "updated_at": "2026-02-14 03:17:42",
+            }
+        ],
+    )
+
+    summary = import_urls_csv(csv_path)
+
+    assert summary == {"created": 0, "updated": 1, "total": 1}
+    link = Link.get(Link.source_id == 42)
+    assert link.slug == "new-slug"
+    assert link.user_id == 7
+    assert link.target_url == "https://seeded.app/new/item"

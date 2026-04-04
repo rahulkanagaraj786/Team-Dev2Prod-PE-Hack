@@ -6,6 +6,7 @@ from app.database import BaseModel
 
 
 class Link(BaseModel):
+    source_id = IntegerField(unique=True, null=True)
     slug = CharField(unique=True, max_length=32)
     user_id = IntegerField(null=True)
     target_url = TextField()
