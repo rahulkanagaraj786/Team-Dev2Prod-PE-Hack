@@ -25,6 +25,9 @@ jobs:
       contents: read
     env:
       DO_NAMESPACE: dev2prod
+      DO_REGISTRY: dev2prod
+      DOKS_CLUSTER_NAME: dev2prod
+      DATABASE_CLUSTER_NAME: dev2prod
       BACKEND_REPOSITORY: dev2prod-backend
       CLIENT_REPOSITORY: dev2prod-client
 
@@ -39,6 +42,53 @@ jobs:
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
+      - name: Wait for cluster readiness
+        run: |
+          for attempt in $(seq 1 40); do
+            STATUS="$(doctl kubernetes cluster get "$DOKS_CLUSTER_NAME" --format Status --no-header | tr -d '[:space:]')"
+            if [ "$STATUS" = "running" ]; then
+              exit 0
+            fi
+            echo "Cluster status: ${STATUS:-unknown}. Waiting for running."
+            sleep 30
+          done
+          echo "Cluster did not become ready in time."
+          exit 1
+
+      - name: Resolve database cluster id
+        run: |
+          DATABASE_ID="$(
+            doctl databases list --output json | python3 -c '
+              import json
+              import os
+              import sys
+
+              target = os.environ["DATABASE_CLUSTER_NAME"]
+              for cluster in json.load(sys.stdin):
+                  if cluster.get("name") == target and cluster.get("engine") == "pg":
+                      print(cluster["id"])
+                      break
+            '
+          )"
+          if [ -z "$DATABASE_ID" ]; then
+            echo "Could not find the PostgreSQL database cluster."
+            exit 1
+          fi
+          echo "DATABASE_ID=$DATABASE_ID" >> "$GITHUB_ENV"
+
+      - name: Wait for database readiness
+        run: |
+          for attempt in $(seq 1 40); do
+            STATUS="$(doctl databases get "$DATABASE_ID" --format Status --no-header | tr -d '[:space:]')"
+            if [ "$STATUS" = "online" ]; then
+              exit 0
+            fi
+            echo "Database status: ${STATUS:-unknown}. Waiting for online."
+            sleep 30
+          done
+          echo "Database did not become ready in time."
+          exit 1
+
       - name: Prepare image names
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -50,13 +100,13 @@ jobs:
           SHORT_SHA="$(printf '%s' "$DEPLOY_SHA" | cut -c1-7)"
           echo "DEPLOY_SHA=$DEPLOY_SHA" >> "$GITHUB_ENV"
           echo "SHORT_SHA=$SHORT_SHA" >> "$GITHUB_ENV"
-          echo "BACKEND_IMAGE=registry.digitalocean.com/${{ secrets.DOCR_REGISTRY }}/${BACKEND_REPOSITORY}:$SHORT_SHA" >> "$GITHUB_ENV"
-          echo "CLIENT_IMAGE=registry.digitalocean.com/${{ secrets.DOCR_REGISTRY }}/${CLIENT_REPOSITORY}:$SHORT_SHA" >> "$GITHUB_ENV"
+          echo "BACKEND_IMAGE=registry.digitalocean.com/${DO_REGISTRY}/${BACKEND_REPOSITORY}:$SHORT_SHA" >> "$GITHUB_ENV"
+          echo "CLIENT_IMAGE=registry.digitalocean.com/${DO_REGISTRY}/${CLIENT_REPOSITORY}:$SHORT_SHA" >> "$GITHUB_ENV"
 
       - name: Log in to DigitalOcean Container Registry
         run: |
           mkdir -p "$HOME/.docker"
-          doctl registries docker-config "${{ secrets.DOCR_REGISTRY }}" \
+          doctl registry docker-config \
             --read-write \
             --expiry-seconds 1200 > "$HOME/.docker/config.json"
 
@@ -73,13 +123,13 @@ jobs:
         run: docker push "$CLIENT_IMAGE"
 
       - name: Save cluster credentials
-        run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 "${{ secrets.DOKS_CLUSTER_NAME }}"
+        run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 "$DOKS_CLUSTER_NAME"
 
       - name: Apply namespace
         run: kubectl apply -f infra/digitalocean/k8s/namespace.yaml
 
       - name: Apply registry pull secret
-        run: doctl registries kubernetes-manifest "${{ secrets.DOCR_REGISTRY }}" --namespace="$DO_NAMESPACE" --name=do-registry | kubectl apply -f -
+        run: doctl registry kubernetes-manifest --namespace="$DO_NAMESPACE" --name=do-registry | kubectl apply -f -
 
       - name: Apply workload secret
         run: |
@@ -108,4 +158,6 @@ jobs:
           kubectl -n "$DO_NAMESPACE" rollout status deployment/client --timeout=180s
 
       - name: Show public service
-        run: kubectl -n "$DO_NAMESPACE" get service client -o wide
+        run: |
+          kubectl -n "$DO_NAMESPACE" get deployment,service,pod -o wide
+          kubectl -n "$DO_NAMESPACE" get service client -o wide
