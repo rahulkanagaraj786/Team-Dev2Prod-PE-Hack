@@ -109,6 +109,21 @@ def list_events():
     if event_type:
         events = events.where(Event.event_type == event_type.strip())
 
+    page = request.args.get("page", type=int)
+    per_page = request.args.get("per_page", type=int)
+    if page and per_page and page > 0 and per_page > 0:
+        total = events.count()
+        offset = (page - 1) * per_page
+        paged_events = events.offset(offset).limit(per_page)
+        return jsonify(
+            {
+                "events": [serialize_event(event) for event in paged_events],
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+            }
+        )
+
     return jsonify([serialize_event(event) for event in events])
 
 

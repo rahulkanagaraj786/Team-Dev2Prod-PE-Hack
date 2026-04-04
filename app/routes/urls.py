@@ -149,6 +149,21 @@ def list_urls():
         except ValueError as error:
             return error_response("validation_failed", str(error), 422)
 
+    page = request.args.get("page", type=int)
+    per_page = request.args.get("per_page", type=int)
+    if page and per_page and page > 0 and per_page > 0:
+        total = urls.count()
+        offset = (page - 1) * per_page
+        paged_urls = urls.offset(offset).limit(per_page)
+        return jsonify(
+            {
+                "urls": [serialize_url(link) for link in paged_urls],
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+            }
+        )
+
     return jsonify([serialize_url(link) for link in urls])
 
 
