@@ -52,7 +52,7 @@ def normalize_url_row(row: dict) -> dict:
         "id": int(row["id"]),
         "source_id": int(row["id"]),
         "slug": row["short_code"].strip(),
-        "user_id": int(row["user_id"]),
+        "user_id": int(row["user_id"]) if row["user_id"].strip() else None,
         "target_url": row["original_url"].strip(),
         "title": row["title"].strip() or None,
         "is_active": parse_bool(row["is_active"]),

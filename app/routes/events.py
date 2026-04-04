@@ -164,7 +164,7 @@ def create_event():
     if not User.select().where(User.id == user_id).exists():
         return error_response("validation_failed", "Choose an existing user.", 422)
 
-    if link.user_id != user_id:
+    if link.user_id is not None and link.user_id != user_id:
         return error_response("validation_failed", "Choose the user who owns that URL.", 422)
 
     details = payload.get("details")
