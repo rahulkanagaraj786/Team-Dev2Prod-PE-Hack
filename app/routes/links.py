@@ -141,10 +141,10 @@ def list_link_events(slug):
 def resolve_link(slug):
     link = get_link_or_none(slug)
     if link is None:
-        return error_response("not_found", "We could not find that link.", 404)
+        return error_response("not_found", "We could not find that URL.", 404)
 
     if not link.is_active:
-        return error_response("inactive_link", "This link is inactive.", 410)
+        return error_response("gone", "This URL is no longer active.", 410)
 
     link.visit_count += 1
     link.updated_at = datetime.now(UTC)
