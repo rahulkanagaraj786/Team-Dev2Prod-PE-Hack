@@ -205,6 +205,24 @@ function toneForStatus(status?: string) {
   return 'quiet'
 }
 
+function matchesWorkloadScope(resource: ResourceRecord | null, clusterStatus: ClusterStatus | null) {
+  if (!resource || !clusterStatus) {
+    return false
+  }
+
+  const scope = clusterStatus.workloadScope
+  if (resource.kind === 'deployment') {
+    return resource.name === scope.deploymentName
+  }
+  if (resource.kind === 'service') {
+    return resource.name === scope.serviceName
+  }
+  if (resource.kind === 'pod') {
+    return resource.name.startsWith(scope.podPrefix)
+  }
+  return false
+}
+
 function App() {
   const [clusterStatus, setClusterStatus] = useState<ClusterStatus | null>(null)
   const [resourceSnapshot, setResourceSnapshot] = useState<ResourceSnapshot | null>(null)
@@ -366,18 +384,15 @@ function App() {
   const activeExperiments = experiments.filter((experiment) =>
     ['running', 'pending', 'paused'].includes(String(experiment.status ?? 'unknown')),
   )
-  const selectedResourceKind = String(displayedResource?.kind ?? '')
-  const canTargetFaults =
-    selectedResourceKind === 'deployment' ||
-    selectedResourceKind === 'service' ||
-    selectedResourceKind === 'pod'
+  const canTargetFaults = matchesWorkloadScope(displayedResource, clusterStatus)
   const chaosReady = clusterStatus?.chaosMesh.status === 'ready'
   const canRunFaults = Boolean(displayedResource && canTargetFaults && chaosReady)
+  const workloadLabel = clusterStatus?.workloadScope.deploymentName ?? 'the workload'
 
   const handleRunExperiment = useEffectEvent(async (type: ExperimentTypeName) => {
     if (!displayedResource || !canTargetFaults) {
       setFaultActionState('error')
-      setFaultActionMessage('Choose the workload deployment, service, or pod before starting a fault run.')
+      setFaultActionMessage(`Choose ${workloadLabel} before starting a fault run.`)
       return
     }
 
@@ -542,6 +557,7 @@ function App() {
                 onClick={() => {
                   startTransition(() => {
                     setSelectedGroup(section.group)
+                    setSelectedName(resourceSnapshot?.resources[section.group][0]?.name ?? null)
                   })
                 }}
               >
@@ -681,8 +697,10 @@ function App() {
                 <small>
                   {!chaosReady
                     ? 'Waiting for fault tooling'
-                    : !canTargetFaults
-                      ? 'Select a workload resource first'
+                    : !displayedResource
+                      ? `Select ${workloadLabel} first`
+                      : !canTargetFaults
+                        ? `Faults stay locked to ${workloadLabel}`
                       : activeFaultType === action.type && faultActionState === 'running'
                         ? 'Starting now'
                         : action.helper}

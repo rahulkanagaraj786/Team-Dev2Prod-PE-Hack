@@ -19,6 +19,12 @@ export interface HealthBlock {
   message?: string
 }
 
+export interface WorkloadScope {
+  deploymentName: string
+  serviceName: string
+  podPrefix: string
+}
+
 export interface ClusterStatus {
   clusterName: string
   namespace: string
@@ -28,6 +34,7 @@ export interface ClusterStatus {
   controlPlane: HealthBlock
   workload: HealthBlock
   chaosMesh: HealthBlock
+  workloadScope: WorkloadScope
 }
 
 export interface ResourceRecord {
