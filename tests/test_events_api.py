@@ -62,3 +62,25 @@ def test_list_events_supports_url_filter(client):
     assert len(response.get_json()) == 1
     assert response.get_json()[0]["url_id"] == link_two.id
     assert response.get_json()[0]["event_type"] == "resolved"
+
+
+def test_create_event(client):
+    create_user(1)
+    link = create_link(1)
+
+    response = client.post(
+        "/events",
+        json={
+            "url_id": link.id,
+            "user_id": 1,
+            "event_type": "click",
+            "details": {"referrer": "https://google.com"},
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.get_json()
+    assert payload["url_id"] == link.id
+    assert payload["user_id"] == 1
+    assert payload["event_type"] == "click"
+    assert payload["details"] == {"referrer": "https://google.com"}

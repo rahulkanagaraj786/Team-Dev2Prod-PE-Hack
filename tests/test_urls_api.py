@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from app.models import Link, User
+from app.models import Event, Link, User
 
 
 def create_user(user_id):
@@ -140,6 +140,21 @@ def test_list_urls_supports_user_filter(client):
     assert response.get_json()[0]["user_id"] == 2
 
 
+def test_list_urls_supports_active_filter(client):
+    create_user(1)
+    active_link = create_link(1, slug="active1")
+    inactive_link = create_link(1, slug="inactive")
+    inactive_link.is_active = False
+    inactive_link.save()
+
+    response = client.get("/urls?is_active=true")
+
+    assert response.status_code == 200
+    assert len(response.get_json()) == 1
+    assert response.get_json()[0]["id"] == active_link.id
+    assert response.get_json()[0]["is_active"] is True
+
+
 def test_get_url_by_id(client):
     create_user(1)
     create_link(1)
@@ -177,3 +192,15 @@ def test_update_url_rejects_invalid_schema(client):
 
     assert response.status_code == 422
     assert response.get_json()["error"]["code"] == "validation_failed"
+
+
+def test_delete_url(client):
+    create_user(1)
+    link = create_link(1, slug="delete-url")
+    Event.create(link=link, user_id=1, event_type="created")
+
+    response = client.delete(f"/urls/{link.id}")
+
+    assert response.status_code == 204
+    assert Link.select().where(Link.id == link.id).count() == 0
+    assert Event.select().where(Event.link == link).count() == 0
