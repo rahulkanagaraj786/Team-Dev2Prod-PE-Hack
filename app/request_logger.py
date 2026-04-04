@@ -28,6 +28,25 @@ def _safe_json(data):
 
 
 def register_request_logger(app):
+    @app.route("/debug/logs")
+    def debug_logs():
+        try:
+            with open(LOG_FILE, "r") as f:
+                lines = f.readlines()
+            entries = [json.loads(l) for l in lines if l.strip()]
+            return app.response_class(
+                response=json.dumps(entries, indent=2),
+                status=200,
+                mimetype="application/json",
+            )
+        except FileNotFoundError:
+            return app.response_class(
+                response=json.dumps({"error": "no logs yet"}),
+                status=404,
+                mimetype="application/json",
+            )
+
+
     @app.before_request
     def before():
         g._start_time = time.time()
