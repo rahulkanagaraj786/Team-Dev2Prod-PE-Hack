@@ -4,13 +4,19 @@ from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify
+from flask import Flask, Response, jsonify, request
 
 from control_plane.cluster import (
     get_resource_detail,
     get_resource_events,
     get_resource_logs,
     list_namespace_resources,
+)
+from control_plane.experiments import (
+    ExperimentRequestError,
+    cancel_experiment,
+    create_experiment,
+    list_experiments,
 )
 
 
@@ -123,6 +129,28 @@ def create_app() -> Flask:
         if logs is None:
             return jsonify(error={"code": "not_found", "message": "We could not find that resource."}), 404
         return jsonify(data=logs)
+
+    @app.get("/api/experiments")
+    def experiments():
+        return jsonify(data=list_experiments(app.config))
+
+    @app.post("/api/experiments")
+    def create_experiment_route():
+        try:
+            payload = create_experiment(app.config, request.get_json(silent=True))
+        except ExperimentRequestError as error:
+            return jsonify(error={"code": error.code, "message": error.message}), error.status_code
+
+        return jsonify(data=payload), 201
+
+    @app.post("/api/experiments/<name>/cancel")
+    def cancel_experiment_route(name: str):
+        try:
+            payload = cancel_experiment(app.config, name)
+        except ExperimentRequestError as error:
+            return jsonify(error={"code": error.code, "message": error.message}), error.status_code
+
+        return jsonify(data=payload)
 
     @app.get("/api/stream")
     def stream():

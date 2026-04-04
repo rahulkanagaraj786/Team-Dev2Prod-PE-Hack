@@ -12,6 +12,8 @@ export type ResourceKindName =
   | 'service'
   | 'experiment'
 
+export type ExperimentTypeName = 'pod-kill' | 'network-latency' | 'cpu-stress'
+
 export interface HealthBlock {
   status: string
   message?: string
@@ -56,4 +58,14 @@ export interface ResourceSnapshot {
 export interface ClusterSnapshotEvent {
   status: ClusterStatus
   resources: ResourceSnapshot
+}
+
+export interface ExperimentRequestPayload {
+  type: ExperimentTypeName
+  target: {
+    kind: string
+    name: string
+  }
+  durationSeconds: number
+  parameters: Record<string, unknown>
 }
