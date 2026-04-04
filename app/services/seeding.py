@@ -50,7 +50,7 @@ def parse_bool(value: str) -> bool:
 def normalize_url_row(row: dict) -> dict:
     return {
         "source_id": int(row["id"]),
-        "slug": row["short_code"].strip().lower(),
+        "slug": row["short_code"].strip(),
         "user_id": int(row["user_id"]),
         "target_url": row["original_url"].strip(),
         "title": row["title"].strip() or None,

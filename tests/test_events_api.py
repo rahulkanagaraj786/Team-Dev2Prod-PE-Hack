@@ -64,6 +64,35 @@ def test_list_events_supports_url_filter(client):
     assert response.get_json()[0]["event_type"] == "resolved"
 
 
+def test_list_events_rejects_invalid_url_filter(client):
+    response = client.get("/events?url_id=abc")
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["message"] == "url_id must be a positive number."
+
+
+def test_list_events_returns_stable_id_order(client):
+    create_user(1)
+    link = create_link(1)
+    first_event = Event.create(
+        link=link,
+        user_id=1,
+        event_type="created",
+        timestamp=datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC),
+    )
+    second_event = Event.create(
+        link=link,
+        user_id=1,
+        event_type="updated",
+        timestamp=datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC),
+    )
+
+    response = client.get("/events")
+
+    assert response.status_code == 200
+    assert [row["id"] for row in response.get_json()] == [first_event.id, second_event.id]
+
+
 def test_create_event(client):
     create_user(1)
     link = create_link(1)
@@ -84,3 +113,21 @@ def test_create_event(client):
     assert payload["user_id"] == 1
     assert payload["event_type"] == "click"
     assert payload["details"] == {"referrer": "https://google.com"}
+
+
+def test_create_event_rejects_non_object_details(client):
+    create_user(1)
+    link = create_link(1)
+
+    response = client.post(
+        "/events",
+        json={
+            "url_id": link.id,
+            "user_id": 1,
+            "event_type": "click",
+            "details": ["https://google.com"],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["message"] == "details must be a JSON object."

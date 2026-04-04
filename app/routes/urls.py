@@ -14,6 +14,8 @@ urls_bp = Blueprint("urls", __name__)
 EDITABLE_FIELDS = {"user_id", "original_url", "title", "is_active"}
 CREATE_FIELDS = {"user_id", "original_url", "title", "short_code"}
 SHORT_CODE_ALPHABET = ascii_letters + digits
+SHORT_CODE_MAX_LENGTH = 32
+TITLE_MAX_LENGTH = 160
 
 
 def format_timestamp(value):
@@ -60,6 +62,8 @@ def validate_user_reference(user_id):
 def validate_title(title):
     if title is not None and (not isinstance(title, str) or not title.strip()):
         return "Title must be plain text."
+    if title is not None and len(title.strip()) > TITLE_MAX_LENGTH:
+        return f"Title must be {TITLE_MAX_LENGTH} characters or fewer."
     return None
 
 
@@ -73,6 +77,33 @@ def parse_bool_query(value):
     if normalized in {"false", "0", "no"}:
         return False
     raise ValueError("is_active must be true or false.")
+
+
+def parse_positive_int_query(value, field_name):
+    if value is None:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        raise ValueError(f"{field_name} must be a positive number.")
+    if not candidate.isdigit():
+        raise ValueError(f"{field_name} must be a positive number.")
+    parsed = int(candidate)
+    if parsed <= 0:
+        raise ValueError(f"{field_name} must be a positive number.")
+    return parsed
+
+
+def validate_short_code(short_code):
+    if not isinstance(short_code, str) or not short_code.strip():
+        return "short_code must be plain text."
+
+    candidate = short_code.strip()
+    if len(candidate) > SHORT_CODE_MAX_LENGTH:
+        return f"short_code must be {SHORT_CODE_MAX_LENGTH} characters or fewer."
+    if not all(character in SHORT_CODE_ALPHABET for character in candidate):
+        return "short_code may only contain letters and numbers."
+
+    return None
 
 
 def get_url_or_none(url_id):
@@ -92,10 +123,14 @@ def generate_short_code(length=6):
 
 @urls_bp.get("/urls")
 def list_urls():
-    urls = Link.select().order_by(Link.created_at.desc())
+    urls = Link.select().order_by(Link.id)
 
-    user_id = request.args.get("user_id", type=int)
-    if user_id is not None:
+    raw_user_id = request.args.get("user_id")
+    if raw_user_id is not None:
+        try:
+            user_id = parse_positive_int_query(raw_user_id, "user_id")
+        except ValueError as error:
+            return error_response("validation_failed", str(error), 422)
         urls = urls.where(Link.user_id == user_id)
 
     is_active = request.args.get("is_active")
@@ -150,12 +185,9 @@ def create_url():
 
     short_code = payload.get("short_code")
     if short_code is not None:
-        if not isinstance(short_code, str) or not short_code.strip():
-            return error_response(
-                "validation_failed",
-                "short_code must be plain text.",
-                422,
-            )
+        short_code_error = validate_short_code(short_code)
+        if short_code_error:
+            return error_response("validation_failed", short_code_error, 422)
         short_code = short_code.strip()
     else:
         short_code = generate_short_code()
