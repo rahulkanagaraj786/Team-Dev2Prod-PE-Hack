@@ -177,6 +177,22 @@ def normalize_experiment(kind: str, item: dict) -> dict:
     }
 
 
+def settle_experiment_status(experiment: dict, active_pod_names: set[str]) -> dict:
+    if experiment.get("type") != "pod-kill":
+        return experiment
+
+    target = str(experiment.get("target") or "").strip()
+    if not target:
+        return experiment
+
+    if target in active_pod_names:
+        return experiment
+
+    next_experiment = dict(experiment)
+    next_experiment["status"] = "recovered"
+    return next_experiment
+
+
 def list_local_resources(config: dict) -> dict:
     workload_name = config.get("WORKLOAD_DEPLOYMENT_NAME", "workload-api")
     control_plane_name = config.get("CONTROL_PLANE_DEPLOYMENT_NAME", "control-plane")
@@ -233,6 +249,11 @@ def load_cluster_resources(namespace: str) -> dict:
     events = load_kubernetes_json(f"/api/v1/namespaces/{namespace}/events")
 
     experiments = []
+    active_pod_names = {
+        item.get("metadata", {}).get("name")
+        for item in pods.get("items", [])
+        if item.get("metadata", {}).get("name")
+    }
     for kind in ("podchaos", "networkchaos", "stresschaos"):
         try:
             response = load_kubernetes_json(
@@ -242,7 +263,11 @@ def load_cluster_resources(namespace: str) -> dict:
             continue
 
         experiments.extend(
-            normalize_experiment(kind, item) for item in response.get("items", [])
+            settle_experiment_status(
+                normalize_experiment(kind, item),
+                active_pod_names,
+            )
+            for item in response.get("items", [])
         )
 
     return {

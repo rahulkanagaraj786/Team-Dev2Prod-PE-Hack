@@ -1,4 +1,8 @@
-from control_plane.cluster import get_resource_events, normalize_experiment
+from control_plane.cluster import (
+    get_resource_events,
+    normalize_experiment,
+    settle_experiment_status,
+)
 
 
 def test_normalize_experiment_uses_product_type_and_running_status():
@@ -54,6 +58,39 @@ def test_normalize_experiment_marks_recovered_runs():
     }
 
     assert normalize_experiment("networkchaos", payload)["status"] == "recovered"
+
+
+def test_settle_experiment_status_marks_old_pod_kills_recovered():
+    payload = {
+        "kind": "experiment",
+        "type": "pod-kill",
+        "name": "pod-kill-3eacfc",
+        "status": "running",
+        "target": "workload-api-old-pod",
+        "updatedAt": "2026-04-04T14:59:32Z",
+    }
+
+    assert settle_experiment_status(payload, {"workload-api-new-pod"}) == {
+        "kind": "experiment",
+        "type": "pod-kill",
+        "name": "pod-kill-3eacfc",
+        "status": "recovered",
+        "target": "workload-api-old-pod",
+        "updatedAt": "2026-04-04T14:59:32Z",
+    }
+
+
+def test_settle_experiment_status_keeps_live_pod_kills_running():
+    payload = {
+        "kind": "experiment",
+        "type": "pod-kill",
+        "name": "pod-kill-3eacfc",
+        "status": "running",
+        "target": "workload-api-live-pod",
+        "updatedAt": "2026-04-04T14:59:32Z",
+    }
+
+    assert settle_experiment_status(payload, {"workload-api-live-pod"})["status"] == "running"
 
 
 def test_get_resource_events_matches_chaos_resource_kinds(monkeypatch):

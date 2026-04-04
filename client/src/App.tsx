@@ -362,7 +362,10 @@ function App() {
     currentResources.find((item) => item.name === selectedName) ??
     null
   const namespaceEvents = resourceSnapshot?.events.slice(0, 6) ?? []
-  const activeExperiments = resourceSnapshot?.resources.experiments ?? []
+  const experiments = resourceSnapshot?.resources.experiments ?? []
+  const activeExperiments = experiments.filter((experiment) =>
+    ['running', 'pending', 'paused'].includes(String(experiment.status ?? 'unknown')),
+  )
   const selectedResourceKind = String(displayedResource?.kind ?? '')
   const canTargetFaults =
     selectedResourceKind === 'deployment' ||
