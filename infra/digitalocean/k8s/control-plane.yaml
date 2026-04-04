@@ -16,6 +16,8 @@ spec:
         app.kubernetes.io/name: control-plane
     spec:
       serviceAccountName: control-plane
+      imagePullSecrets:
+        - name: do-registry
       containers:
         - name: control-plane
           image: __BACKEND_IMAGE__
