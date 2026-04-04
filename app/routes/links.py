@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, redirect, request
 from peewee import DoesNotExist
 from peewee import IntegrityError
 
@@ -88,6 +88,22 @@ def get_link(slug):
         return jsonify(error={"message": "We could not find that link."}), 404
 
     return jsonify(data=serialize_link(link))
+
+
+@links_bp.get("/<slug>")
+def resolve_link(slug):
+    link = get_link_or_none(slug)
+    if link is None:
+        return jsonify(error={"message": "We could not find that link."}), 404
+
+    if not link.is_active:
+        return jsonify(error={"message": "This link is inactive."}), 410
+
+    link.visit_count += 1
+    link.updated_at = datetime.now(UTC)
+    link.save()
+
+    return redirect(link.target_url, code=302)
 
 
 @links_bp.patch("/api/links/<slug>")

@@ -51,6 +51,47 @@ def test_get_link_returns_one_item(client):
     assert data["title"] == "Ops review"
 
 
+def test_resolve_link_redirects_and_increments_visits(client):
+    client.post(
+        "/api/links",
+        json={
+            "slug": "launch-room",
+            "targetUrl": "https://dev2prod.app/launch-room",
+        },
+    )
+
+    response = client.get("/launch-room", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "https://dev2prod.app/launch-room"
+
+    detail_response = client.get("/api/links/launch-room")
+    assert detail_response.get_json()["data"]["visitCount"] == 1
+
+
+def test_resolve_link_rejects_inactive_links(client):
+    client.post(
+        "/api/links",
+        json={
+            "slug": "quiet-room",
+            "targetUrl": "https://dev2prod.app/quiet-room",
+        },
+    )
+    client.patch("/api/links/quiet-room", json={"isActive": False})
+
+    response = client.get("/quiet-room", follow_redirects=False)
+
+    assert response.status_code == 410
+    assert response.get_json()["error"]["message"] == "This link is inactive."
+
+
+def test_resolve_link_returns_not_found_for_missing_slug(client):
+    response = client.get("/missing-room", follow_redirects=False)
+
+    assert response.status_code == 404
+    assert response.get_json()["error"]["message"] == "We could not find that link."
+
+
 def test_update_link_changes_editable_fields(client):
     client.post(
         "/api/links",
