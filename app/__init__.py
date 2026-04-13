@@ -23,6 +23,13 @@ def create_app():
 
     @app.route("/health")
     def health():
-        return jsonify(status="ok")
+        from app.database import db
+        try:
+            db.execute_sql("SELECT 1")
+            db_status = "ok"
+        except Exception as e:
+            db_status = str(e)
+        status = "ok" if db_status == "ok" else "degraded"
+        return jsonify(status=status, db=db_status), 200 if status == "ok" else 503
 
     return app
